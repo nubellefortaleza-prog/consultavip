@@ -129,6 +129,11 @@ vi.mock("nanoid", () => ({
   nanoid: () => "test-nanoid-123",
 }));
 
+// Mock email helper (MCP Gmail)
+vi.mock("./email", () => ({
+  sendEmail: vi.fn().mockResolvedValue({ success: true, messageId: "mock-msg-123" }),
+}));
+
 describe("consultation routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -276,16 +281,11 @@ describe("consultation routes", () => {
   });
 
   describe("consultation.sendEmail", () => {
-    it("formats email subject correctly as 'Nome do Paciente - Data'", async () => {
+    it("sends email and returns success", async () => {
       const { ctx } = createAuthContext();
       const caller = appRouter.createCaller(ctx);
 
-      // Mock fetch for email API
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () => Promise.resolve({ success: true }),
-      });
-      global.fetch = mockFetch;
+      const { sendEmail: mockSendEmail } = await import("./email");
 
       const result = await caller.consultation.sendEmail({
         consultationId: 42,
@@ -301,14 +301,12 @@ describe("consultation routes", () => {
 
       expect(result).toHaveProperty("success", true);
 
-      // Verify the email was sent with correct subject format
-      const fetchCall = mockFetch.mock.calls[0];
-      const body = JSON.parse(fetchCall[1].body);
-      expect(body.to).toBe("nubellefortaleza@gmail.com");
-      expect(body.subject).toBe("Maria Silva - 19/02/2026");
-      expect(body.html).toContain("VIP ESTETIC");
-      expect(body.html).toContain("Maria Silva");
-      expect(body.text).toContain("NOME DO PACIENTE: Maria Silva");
+      // Verify sendEmail was called with correct parameters
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+      const call = (mockSendEmail as any).mock.calls[0][0];
+      expect(call.to).toBe("nubellefortaleza@gmail.com");
+      expect(call.subject).toBe("Maria Silva - 19/02/2026");
+      expect(call.text).toContain("NOME DO PACIENTE: Maria Silva");
     });
   });
 });

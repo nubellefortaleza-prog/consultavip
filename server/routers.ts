@@ -11,6 +11,7 @@ import { createConsultation, updateConsultation, getConsultationById, getConsult
 import { nanoid } from "nanoid";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./_core/env";
+import { sendEmail } from "./email";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
@@ -213,30 +214,27 @@ Retorne um JSON com estes campos:
           ["Observações Adicionais", input.additionalNotes],
         ].map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
 
-        try {
-          const notifyUrl = `${ENV.forgeApiUrl.replace(/\/+$/, "")}/v1/notification/email`;
-          const emailResponse = await fetch(notifyUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${ENV.forgeApiKey}` },
-            body: JSON.stringify({ to: DESTINATION_EMAIL, subject, html: htmlReport, text: reportText }),
-          });
+        // Save report data first
+        await updateConsultation(input.consultationId, {
+          patientName: input.patientName, consultationDate: input.consultationDate,
+          patientProfile: input.patientProfile, mainComplaints: input.mainComplaints,
+          treatmentPlan: input.treatmentPlan, budgetPresented: input.budgetPresented,
+          closedDeal: input.closedDeal, additionalNotes: input.additionalNotes,
+        });
 
-          if (!emailResponse.ok) {
-            const errText = await emailResponse.text().catch(() => "");
-            throw new Error(`Email API failed: ${emailResponse.status} ${errText}`);
-          }
+        try {
+          await sendEmail({
+            to: DESTINATION_EMAIL,
+            subject,
+            text: reportText,
+            html: htmlReport,
+          });
 
           await updateConsultation(input.consultationId, { emailSent: "yes", emailSentAt: new Date() });
           return { success: true, message: "E-mail enviado com sucesso!" };
-        } catch (err) {
+        } catch (err: any) {
           console.error("Email send error:", err);
-          await updateConsultation(input.consultationId, {
-            patientName: input.patientName, consultationDate: input.consultationDate,
-            patientProfile: input.patientProfile, mainComplaints: input.mainComplaints,
-            treatmentPlan: input.treatmentPlan, budgetPresented: input.budgetPresented,
-            closedDeal: input.closedDeal, additionalNotes: input.additionalNotes,
-          });
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Relatório salvo, mas houve um erro ao enviar o e-mail. Tente novamente." });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Relatório salvo. Erro ao enviar e-mail: ${err.message || "Verifique as configurações SMTP."}` });
         }
       }),
 
