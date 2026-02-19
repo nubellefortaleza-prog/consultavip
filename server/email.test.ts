@@ -1,63 +1,53 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { sendEmail } from "./email";
 
-// Mock child_process.execFile to simulate MCP CLI output
-vi.mock("child_process", () => ({
-  execFile: vi.fn((cmd: string, args: string[], opts: any, cb?: Function) => {
-    // If called with promisify pattern, the callback is in a different position
-    // promisify wraps it, so we return a mock that resolves
-  }),
-}));
-
-// Mock fs/promises
-vi.mock("fs/promises", () => ({
-  readFile: vi.fn().mockResolvedValue(JSON.stringify({
-    success: true,
-    result: [
-      {
-        email: {
-          content: "Test email content",
-          payload: { subject: "Test Subject", to: ["test@test.com"] },
-        },
-        messageId: "abc123",
-      },
-    ],
-  })),
-}));
-
-// Mock util.promisify to return a function that resolves with expected output
-vi.mock("util", async () => {
-  const actual = await vi.importActual("util");
-  return {
-    ...actual as any,
-    promisify: () => vi.fn().mockResolvedValue({
-      stdout: "MCP tool invocation result saved to:\n/tmp/manus-mcp/mcp_result_test123.json\n",
-      stderr: "",
+// Mock nodemailer
+const mockSendMail = vi.fn().mockResolvedValue({ messageId: "mock-msg-123" });
+vi.mock("nodemailer", () => ({
+  default: {
+    createTransport: vi.fn().mockReturnValue({
+      sendMail: mockSendMail,
     }),
-  };
-});
+  },
+}));
 
-describe("Email via MCP Gmail", () => {
+describe("Email via nodemailer SMTP", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.SMTP_USER = "test@gmail.com";
+    process.env.SMTP_PASS = "test-app-password";
   });
 
-  it("should call manus-mcp-cli with correct parameters and return success", async () => {
+  it("should send email with correct parameters", async () => {
+    const { sendEmail } = await import("./email");
+
     const result = await sendEmail({
-      subject: "Maria Silva - 19/02/2026",
-      text: "RELATÓRIO DE CONSULTA - VIP ESTETIC\nNOME DO PACIENTE: Maria Silva",
       to: "nubellefortaleza@gmail.com",
-    });
-
-    expect(result).toHaveProperty("success", true);
-  });
-
-  it("should use default destination email when 'to' is not provided", async () => {
-    const result = await sendEmail({
-      subject: "Test Subject",
-      text: "Test content",
+      subject: "Maria Silva - 19/02/2026",
+      text: "Relatório de consulta...",
+      html: "<h1>Relatório</h1>",
     });
 
     expect(result.success).toBe(true);
+    expect(result.messageId).toBe("mock-msg-123");
+    expect(mockSendMail).toHaveBeenCalledTimes(1);
+
+    const call = mockSendMail.mock.calls[0][0];
+    expect(call.to).toBe("nubellefortaleza@gmail.com");
+    expect(call.subject).toBe("Maria Silva - 19/02/2026");
+    expect(call.text).toBe("Relatório de consulta...");
+    expect(call.html).toBe("<h1>Relatório</h1>");
+    expect(call.from).toContain("ConsultaVip");
+  });
+
+  it("should use default destination email when 'to' is not provided", async () => {
+    const { sendEmail } = await import("./email");
+
+    await sendEmail({
+      subject: "Test",
+      text: "Test content",
+    });
+
+    const call = mockSendMail.mock.calls[0][0];
+    expect(call.to).toBe("nubellefortaleza@gmail.com");
   });
 });

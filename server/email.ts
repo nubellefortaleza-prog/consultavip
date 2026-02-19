@@ -1,8 +1,4 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { readFile } from "fs/promises";
-
-const execFileAsync = promisify(execFile);
+import nodemailer from "nodemailer";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
@@ -14,66 +10,43 @@ export interface EmailPayload {
 }
 
 /**
- * Send email using the MCP Gmail integration (manus-mcp-cli).
- * The Gmail MCP tool `gmail_send_messages` sends emails through the
- * authenticated Gmail account available in the sandbox environment.
+ * Send email via SMTP using nodemailer.
+ * Uses SMTP_USER and SMTP_PASS environment variables for authentication.
+ * Supports Gmail SMTP with App Passwords.
  */
 export async function sendEmail(payload: EmailPayload): Promise<{ success: boolean; messageId?: string }> {
-  const to = payload.to || DESTINATION_EMAIL;
+  const smtpUser = process.env.SMTP_USER;
+  const smtpPass = process.env.SMTP_PASS;
 
-  const mcpInput = JSON.stringify({
-    messages: [
-      {
-        subject: payload.subject,
-        to: [to],
-        content: payload.text,
-      },
-    ],
+  if (!smtpUser || !smtpPass) {
+    throw new Error("Credenciais SMTP não configuradas. Configure SMTP_USER e SMTP_PASS nas configurações do app.");
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    auth: {
+      user: smtpUser,
+      pass: smtpPass,
+    },
   });
 
+  const to = payload.to || DESTINATION_EMAIL;
+
   try {
-    const { stdout, stderr } = await execFileAsync(
-      "manus-mcp-cli",
-      [
-        "tool",
-        "call",
-        "gmail_send_messages",
-        "--server",
-        "gmail",
-        "--input",
-        mcpInput,
-      ],
-      { timeout: 60_000 }
-    );
+    const info = await transporter.sendMail({
+      from: `"ConsultaVip - Vip Estetic" <${smtpUser}>`,
+      to,
+      subject: payload.subject,
+      text: payload.text,
+      html: payload.html,
+    });
 
-    console.log("[Email MCP] stdout:", stdout);
-    if (stderr) console.warn("[Email MCP] stderr:", stderr);
-
-    // Parse the result file path from stdout
-    const fileMatch = stdout.match(/mcp_result_[a-f0-9]+\.json/);
-    if (fileMatch) {
-      const resultPath = `/tmp/manus-mcp/${fileMatch[0]}`;
-      try {
-        const resultJson = await readFile(resultPath, "utf-8");
-        const result = JSON.parse(resultJson);
-        if (result.success && result.result?.[0]?.messageId) {
-          console.log("[Email MCP] Email sent successfully, messageId:", result.result[0].messageId);
-          return { success: true, messageId: result.result[0].messageId };
-        }
-      } catch {
-        // If we can't parse the result file, check stdout for success indicators
-      }
-    }
-
-    // If stdout contains "Message ID" or "messageId", consider it a success
-    if (stdout.includes("messageId") || stdout.includes("Message ID")) {
-      return { success: true };
-    }
-
-    // If we got here without error, the command executed successfully
-    return { success: true };
+    console.log("[Email] Sent successfully:", info.messageId);
+    return { success: true, messageId: info.messageId };
   } catch (err: any) {
-    console.error("[Email MCP] Failed to send email:", err.message || err);
-    throw new Error(`Falha ao enviar e-mail via Gmail: ${err.message || "Erro desconhecido"}`);
+    console.error("[Email] SMTP send error:", err.message);
+    throw new Error(`Falha ao enviar e-mail: ${err.message}`);
   }
 }

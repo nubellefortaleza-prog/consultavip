@@ -129,7 +129,7 @@ vi.mock("nanoid", () => ({
   nanoid: () => "test-nanoid-123",
 }));
 
-// Mock email helper (MCP Gmail)
+// Mock email helper (nodemailer SMTP)
 vi.mock("./email", () => ({
   sendEmail: vi.fn().mockResolvedValue({ success: true, messageId: "mock-msg-123" }),
 }));
