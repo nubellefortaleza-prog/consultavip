@@ -18,3 +18,4 @@
 - [x] Testes vitest para rotas backend (11 testes passando)
 - [x] Bug fix: erro ao enviar e-mail - "Relatório salvo, mas houve um erro ao enviar o e-mail"
 - [x] Reestruturar envio de e-mail: usar MCP Gmail ao invés de SMTP/nodemailer
+- [x] Bug fix: erro de transcrição - Whisper com retry + LLM fallback + Gemini inline data fallback

@@ -48,40 +48,101 @@ export const appRouter = router({
     transcribe: protectedProcedure
       .input(z.object({ consultationId: z.number(), audioUrl: z.string() }))
       .mutation(async ({ input }) => {
-        const whisperResult = await transcribeAudio({
-          audioUrl: input.audioUrl,
-          language: "pt",
-          prompt: "Transcrição de consulta médica estética em português brasileiro. Termos: botox, preenchimento, harmonização facial, bioestimulador, skinbooster, peeling, laser, ácido hialurônico.",
-        });
+        // Attempt 1: Whisper via Forge API (with retry)
+        for (let attempt = 0; attempt < 2; attempt++) {
+          const whisperResult = await transcribeAudio({
+            audioUrl: input.audioUrl,
+            language: "pt",
+            prompt: "Transcrição de consulta médica estética em português brasileiro. Termos: botox, preenchimento, harmonização facial, bioestimulador, skinbooster, peeling, laser, ácido hialurônico.",
+          });
 
-        if ("error" in whisperResult) {
-          try {
-            const geminiApiKey = process.env.GEMINI_API_KEY;
-            if (!geminiApiKey) throw new Error("GEMINI_API_KEY não configurada");
-            const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-            const response = await ai.models.generateContent({
-              model: "gemini-2.5-flash",
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { fileData: { fileUri: input.audioUrl, mimeType: "audio/webm" } },
-                    { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
-                  ],
-                },
-              ],
-            });
-            const transcription = response.text || "";
-            if (!transcription) throw new Error("Gemini não retornou transcrição");
-            await updateConsultation(input.consultationId, { transcription });
-            return { text: transcription, source: "gemini" };
-          } catch {
-            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Falha na transcrição: ${whisperResult.error}` });
+          if (!("error" in whisperResult)) {
+            await updateConsultation(input.consultationId, { transcription: whisperResult.text });
+            return { text: whisperResult.text, source: "whisper" };
+          }
+
+          console.log(`[Transcription] Whisper attempt ${attempt + 1} failed:`, whisperResult.error, whisperResult.details || "");
+          if (attempt === 0) {
+            await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
           }
         }
 
-        await updateConsultation(input.consultationId, { transcription: whisperResult.text });
-        return { text: whisperResult.text, source: "whisper" };
+        // Attempt 2: Use invokeLLM (Forge API) with file_url for audio transcription
+        try {
+          console.log("[Transcription] Falling back to invokeLLM with file_url...");
+          const llmResult = await invokeLLM({
+            messages: [
+              {
+                role: "system",
+                content: "Você é um transcritor profissional. Transcreva o áudio da consulta médica estética em português brasileiro de forma completa e precisa. Retorne APENAS a transcrição, sem comentários, títulos ou formatação adicional.",
+              },
+              {
+                role: "user",
+                content: [
+                  {
+                    type: "file_url" as const,
+                    file_url: {
+                      url: input.audioUrl,
+                      mime_type: "audio/wav" as const,
+                    },
+                  },
+                  {
+                    type: "text" as const,
+                    text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa.",
+                  },
+                ],
+              },
+            ],
+          });
+
+          const transcription = typeof llmResult.choices[0]?.message?.content === "string"
+            ? llmResult.choices[0].message.content
+            : "";
+
+          if (transcription.trim()) {
+            await updateConsultation(input.consultationId, { transcription });
+            return { text: transcription, source: "llm" };
+          }
+          throw new Error("LLM não retornou transcrição");
+        } catch (llmErr: any) {
+          console.error("[Transcription] LLM fallback failed:", llmErr.message);
+        }
+
+        // Attempt 3: Gemini direct API with inline audio data
+        try {
+          const geminiApiKey = process.env.GEMINI_API_KEY;
+          if (!geminiApiKey) throw new Error("GEMINI_API_KEY não configurada");
+          console.log("[Transcription] Falling back to Gemini direct API...");
+
+          const audioResp = await fetch(input.audioUrl);
+          if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
+          const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+          const base64Audio = audioBuffer.toString("base64");
+
+          const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+          const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { inlineData: { data: base64Audio, mimeType: "audio/webm" } },
+                  { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
+                ],
+              },
+            ],
+          });
+          const transcription = response.text || "";
+          if (!transcription) throw new Error("Gemini não retornou transcrição");
+          await updateConsultation(input.consultationId, { transcription });
+          return { text: transcription, source: "gemini" };
+        } catch (geminiErr: any) {
+          console.error("[Transcription] Gemini fallback failed:", geminiErr.message);
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
+          });
+        }
       }),
 
     generateReport: protectedProcedure
