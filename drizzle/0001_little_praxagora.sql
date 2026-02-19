@@ -1,0 +1,20 @@
+CREATE TABLE `consultations` (
+	`id` int AUTO_INCREMENT NOT NULL,
+	`userId` int NOT NULL,
+	`audioUrl` text,
+	`audioKey` varchar(512),
+	`transcription` text,
+	`patientName` varchar(255),
+	`consultationDate` varchar(64),
+	`patientProfile` text,
+	`mainComplaints` text,
+	`treatmentPlan` text,
+	`budgetPresented` text,
+	`closedDeal` text,
+	`additionalNotes` text,
+	`emailSent` enum('yes','no') NOT NULL DEFAULT 'no',
+	`emailSentAt` timestamp,
+	`createdAt` timestamp NOT NULL DEFAULT (now()),
+	`updatedAt` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+	CONSTRAINT `consultations_id` PRIMARY KEY(`id`)
+);
