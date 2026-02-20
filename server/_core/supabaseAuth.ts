@@ -16,15 +16,15 @@ export type SupabaseUser = {
 function getSupabaseConfig() {
   const url = ENV.supabaseUrl;
   const anonKey = ENV.supabaseAnonKey;
-  const serviceRoleKey = ENV.supabaseServiceRoleKey;
 
-  if (!url || (!anonKey && !serviceRoleKey)) {
+  // For /auth/v1/user token validation, anon key is enough and safer than service role key.
+  if (!url || !anonKey) {
     return null;
   }
 
   return {
     url: url.replace(/\/$/, ""),
-    apiKey: serviceRoleKey || anonKey,
+    apiKey: anonKey,
   };
 }
 
