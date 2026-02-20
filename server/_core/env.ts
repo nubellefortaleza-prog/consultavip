@@ -13,6 +13,11 @@ export const ENV = {
   aiApiKey: nonEmpty(process.env.AI_API_KEY) || nonEmpty(process.env.OPENAI_API_KEY),
   aiModel: process.env.AI_MODEL ?? "gpt-4o-mini",
 
+  // Supabase auth
+  supabaseUrl: nonEmpty(process.env.SUPABASE_URL),
+  supabaseAnonKey: nonEmpty(process.env.SUPABASE_ANON_KEY),
+  supabaseServiceRoleKey: nonEmpty(process.env.SUPABASE_SERVICE_ROLE_KEY),
+
   // Legacy Manus/Forge compatibility (fallback only)
   forgeApiUrl: process.env.BUILT_IN_FORGE_API_URL ?? "",
   forgeApiKey: process.env.BUILT_IN_FORGE_API_KEY ?? "",

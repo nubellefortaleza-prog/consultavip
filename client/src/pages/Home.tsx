@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
-const LOGO_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310419663032644247/XjbcOchGTMROPEqF.png";
+const LOGO_URL = "/favicon.svg";
 
 type AppStep = "record" | "uploading" | "transcribing" | "report" | "sending" | "done";
 
