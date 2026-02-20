@@ -7,6 +7,7 @@ export const ENV = {
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",
   ownerOpenId: process.env.OWNER_OPEN_ID ?? "",
   isProduction: process.env.NODE_ENV === "production",
+  authMode: process.env.AUTH_MODE ?? "supabase",
 
   // New provider-neutral AI config
   aiBaseUrl: nonEmpty(process.env.AI_BASE_URL) || nonEmpty(process.env.OPENAI_BASE_URL),

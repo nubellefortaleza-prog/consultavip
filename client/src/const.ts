@@ -8,6 +8,10 @@ function getManusLoginUrl() {
   const redirectUri = `${window.location.origin}/api/oauth/callback`;
   const state = withBase64State(redirectUri);
 
+  if (!oauthPortalUrl || !appId) {
+    return `${window.location.origin}/404`;
+  }
+
   const url = new URL(`${oauthPortalUrl}/app-auth`);
   url.searchParams.set("appId", appId);
   url.searchParams.set("redirectUri", redirectUri);
@@ -21,6 +25,10 @@ function getSupabaseLoginUrl() {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const provider = import.meta.env.VITE_SUPABASE_AUTH_PROVIDER || "google";
   const redirectTo = `${window.location.origin}/auth/callback`;
+
+  if (!supabaseUrl) {
+    return `${window.location.origin}/404`;
+  }
 
   const url = new URL(`${supabaseUrl}/auth/v1/authorize`);
   url.searchParams.set("provider", provider);
