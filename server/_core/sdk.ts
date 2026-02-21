@@ -84,11 +84,11 @@ const createOAuthHttpClient = (): AxiosInstance =>
 
 class SDKServer {
   private readonly client: AxiosInstance;
-  private readonly oauthService: OAuthService;
+  private readonly oauthService: OAuthService | null;
 
   constructor(client: AxiosInstance = createOAuthHttpClient()) {
     this.client = client;
-    this.oauthService = new OAuthService(this.client);
+    this.oauthService = ENV.authMode === "manus" ? new OAuthService(this.client) : null;
   }
 
   private deriveLoginMethod(
@@ -122,6 +122,7 @@ class SDKServer {
     code: string,
     state: string
   ): Promise<ExchangeTokenResponse> {
+    if (!this.oauthService) throw new Error("Legacy OAuth manus está desabilitado");
     return this.oauthService.getTokenByCode(code, state);
   }
 
@@ -131,6 +132,7 @@ class SDKServer {
    * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
    */
   async getUserInfo(accessToken: string): Promise<GetUserInfoResponse> {
+    if (!this.oauthService) throw new Error("Legacy OAuth manus está desabilitado");
     const data = await this.oauthService.getUserInfoByToken({
       accessToken,
     } as ExchangeTokenResponse);
@@ -270,8 +272,8 @@ class SDKServer {
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
 
-    // If user not in DB, sync from OAuth server automatically
-    if (!user) {
+    // If user not in DB, optionally sync from legacy Manus OAuth server.
+    if (!user && ENV.authMode === "manus") {
       try {
         const userInfo = await this.getUserInfoWithJwt(sessionCookie ?? "");
         await db.upsertUser({

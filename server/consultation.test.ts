@@ -66,6 +66,9 @@ vi.mock("./db", () => ({
     createdAt: new Date(),
     updatedAt: new Date(),
   }),
+  getAppSettings: vi
+    .fn()
+    .mockResolvedValue({ webhookEnabled: false, webhookUrl: null }),
   getConsultationsByUser: vi.fn().mockResolvedValue([
     {
       id: 42,
@@ -113,7 +116,8 @@ vi.mock("./_core/llm", () => ({
             consultationDate: "19/02/2026 às 14:30",
             patientProfile: "Mulher, 35 anos",
             mainComplaints: "Rugas na testa",
-            treatmentPlan: "Aplicação de toxina botulínica (Botox) na região frontal",
+            treatmentPlan:
+              "Aplicação de toxina botulínica (Botox) na região frontal",
             budgetPresented: "Não mencionado",
             closedDeal: "Não mencionado",
             additionalNotes: "Não mencionado",
@@ -131,7 +135,9 @@ vi.mock("nanoid", () => ({
 
 // Mock email helper (nodemailer SMTP)
 vi.mock("./email", () => ({
-  sendEmail: vi.fn().mockResolvedValue({ success: true, messageId: "mock-msg-123" }),
+  sendEmail: vi
+    .fn()
+    .mockResolvedValue({ success: true, messageId: "mock-msg-123" }),
 }));
 
 describe("consultation routes", () => {
