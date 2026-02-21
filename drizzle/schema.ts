@@ -23,6 +23,8 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
+  reportEmail: varchar("reportEmail", { length: 320 }),
+  logoUrl: text("logoUrl"),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "recorder"])
     .default("user")
@@ -60,6 +62,7 @@ export const consultations = mysqlTable("consultations", {
 export const appSettings = mysqlTable("appSettings", {
   id: int("id").autoincrement().primaryKey(),
   aiApiKey: text("aiApiKey"),
+  reportDefaultEmail: varchar("reportDefaultEmail", { length: 320 }),
   webhookUrl: text("webhookUrl"),
   webhookEnabled: boolean("webhookEnabled").default(false).notNull(),
   googleCalendarEnabled: boolean("googleCalendarEnabled")

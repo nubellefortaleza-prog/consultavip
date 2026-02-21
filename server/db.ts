@@ -153,6 +153,44 @@ export async function updateUserRole(
   await db.update(users).set({ role }).where(eq(users.openId, openId));
 }
 
+export async function createUserByAdmin(data: {
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  role?: "user" | "admin" | "recorder";
+  reportEmail?: string | null;
+  logoUrl?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(users).values({
+    openId: data.openId,
+    name: data.name ?? null,
+    email: data.email ?? null,
+    role: data.role ?? "user",
+    reportEmail: data.reportEmail ?? null,
+    logoUrl: data.logoUrl ?? null,
+    loginMethod: "admin_created",
+    lastSignedIn: new Date(),
+  });
+}
+
+export async function updateUserProfileByAdmin(
+  openId: string,
+  data: Partial<{
+    name: string | null;
+    email: string | null;
+    role: "user" | "admin" | "recorder";
+    reportEmail: string | null;
+    logoUrl: string | null;
+  }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set(data).where(eq(users.openId, openId));
+}
+
 export async function getAppSettings() {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -173,6 +211,7 @@ export async function getAppSettings() {
 export async function updateAppSettings(
   data: Partial<{
     aiApiKey: string | null;
+    reportDefaultEmail: string | null;
     webhookUrl: string | null;
     webhookEnabled: boolean;
     googleCalendarEnabled: boolean;

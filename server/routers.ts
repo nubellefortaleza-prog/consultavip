@@ -11,6 +11,7 @@ import {
   createConsultation,
   updateConsultation,
   getAppSettings,
+  getUserByOpenId,
   getConsultationById,
   getConsultationsByUser,
 } from "./db";
@@ -44,7 +45,7 @@ const triggerWebhookIfEnabled = async (payload: Record<string, unknown>) => {
   }
 };
 
-const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
+const FALLBACK_DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
 export const appRouter = router({
   system: systemRouter,
@@ -399,8 +400,17 @@ Retorne um JSON com estes campos:
         });
 
         try {
+          const [settings, userData] = await Promise.all([
+            getAppSettings().catch(() => null),
+            getUserByOpenId(ctx.user.openId).catch(() => null),
+          ]);
+          const destinationEmail =
+            userData?.reportEmail ||
+            settings?.reportDefaultEmail ||
+            FALLBACK_DESTINATION_EMAIL;
+
           await sendEmail({
-            to: DESTINATION_EMAIL,
+            to: destinationEmail,
             subject,
             text: reportText,
             html: htmlReport,

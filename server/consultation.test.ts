@@ -48,7 +48,7 @@ function createUnauthContext(): { ctx: TrpcContext } {
 // Mock the database functions
 vi.mock("./db", () => ({
   upsertUser: vi.fn(),
-  getUserByOpenId: vi.fn(),
+  getUserByOpenId: vi.fn().mockResolvedValue({ reportEmail: null }),
   createConsultation: vi.fn().mockResolvedValue(42),
   updateConsultation: vi.fn().mockResolvedValue(undefined),
   getConsultationById: vi.fn().mockResolvedValue({

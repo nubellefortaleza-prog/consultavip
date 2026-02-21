@@ -27,6 +27,7 @@ import {
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 const LOGO_URL = "/logo-ve.svg";
+const APPLE_TOUCH_ICON_ID = "apple-touch-icon-dynamic";
 
 type AppStep =
   | "record"
@@ -111,7 +112,33 @@ export default function Home() {
     enabled: isAuthenticated && isAdmin,
   });
   const setRoleMutation = trpc.system.users.setRole.useMutation();
+  const updateUserProfileMutation =
+    trpc.system.users.updateProfile.useMutation();
+  const createUserMutation = trpc.system.users.create.useMutation();
   const [aiApiKeyInput, setAiApiKeyInput] = useState("");
+
+  const logoUrl = user?.logoUrl || LOGO_URL;
+
+  useEffect(() => {
+    if (!logoUrl) return;
+    const iconEl = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (iconEl) {
+      iconEl.href = logoUrl;
+    }
+
+    let appleTouchIcon = document.getElementById(
+      APPLE_TOUCH_ICON_ID
+    ) as HTMLLinkElement | null;
+
+    if (!appleTouchIcon) {
+      appleTouchIcon = document.createElement("link");
+      appleTouchIcon.id = APPLE_TOUCH_ICON_ID;
+      appleTouchIcon.rel = "apple-touch-icon";
+      document.head.appendChild(appleTouchIcon);
+    }
+
+    appleTouchIcon.href = logoUrl;
+  }, [logoUrl]);
 
   const handleStartRecording = useCallback(async () => {
     try {
@@ -240,6 +267,7 @@ export default function Home() {
 
   const handleUpdateSettings = useCallback(
     async (data: {
+      reportDefaultEmail?: string | null;
       webhookUrl?: string | null;
       webhookEnabled?: boolean;
       googleCalendarEnabled?: boolean;
@@ -280,6 +308,43 @@ export default function Home() {
       }
     },
     [setRoleMutation, usersQuery]
+  );
+
+  const handleUpdateUserProfile = useCallback(
+    async (input: {
+      openId: string;
+      reportEmail?: string | null;
+      logoUrl?: string | null;
+    }) => {
+      try {
+        await updateUserProfileMutation.mutateAsync(input);
+        await usersQuery.refetch();
+        toast.success("Dados do usuário atualizados");
+      } catch (err: any) {
+        toast.error(err.message || "Erro ao atualizar dados do usuário");
+      }
+    },
+    [updateUserProfileMutation, usersQuery]
+  );
+
+  const handleCreateUser = useCallback(
+    async (input: {
+      openId: string;
+      name?: string;
+      email?: string;
+      role?: "user" | "admin" | "recorder";
+      reportEmail?: string | null;
+      logoUrl?: string | null;
+    }) => {
+      try {
+        await createUserMutation.mutateAsync(input);
+        await usersQuery.refetch();
+        toast.success("Usuário criado com sucesso");
+      } catch (err: any) {
+        toast.error(err.message || "Erro ao criar usuário");
+      }
+    },
+    [createUserMutation, usersQuery]
   );
 
   const handleNewConsultation = useCallback(() => {
@@ -367,6 +432,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col bg-[var(--color-vip-pearl)]">
       <AppHeader
         user={user}
+        logoUrl={logoUrl}
         onLogout={logout}
         onToggleHistory={
           isRecorder ? undefined : () => setShowHistory(!showHistory)
@@ -391,6 +457,9 @@ export default function Home() {
                 aiApiKeyInput={aiApiKeyInput}
                 onAiApiKeyChange={setAiApiKeyInput}
                 onAiApiKeySave={handleUpdateAiKey}
+                onSaveDefaultReportEmail={email =>
+                  handleUpdateSettings({ reportDefaultEmail: email })
+                }
                 onToggleWebhook={checked =>
                   handleUpdateSettings({ webhookEnabled: checked })
                 }
@@ -401,6 +470,8 @@ export default function Home() {
                   handleUpdateSettings({ googleCalendarEnabled: checked })
                 }
                 onSetRole={handleSetRole}
+                onUpdateUserProfile={handleUpdateUserProfile}
+                onCreateUser={handleCreateUser}
               />
             )}
 
@@ -559,7 +630,7 @@ export default function Home() {
                   </p>
                   {!isRecorder && (
                     <p className="text-sm font-medium text-[var(--color-vip-blush)] mb-8 font-sans">
-                      nubellefortaleza@gmail.com
+                      E-mail configurado do usuário/admin
                     </p>
                   )}
                   {!isRecorder && (
@@ -614,11 +685,13 @@ export default function Home() {
 
 function AppHeader({
   user,
+  logoUrl,
   onLogout,
   onToggleHistory,
   showHistory,
 }: {
   user?: any;
+  logoUrl?: string;
   onLogout?: () => void;
   onToggleHistory?: () => void;
   showHistory?: boolean;
@@ -628,7 +701,7 @@ function AppHeader({
       <div className="container flex items-center justify-between h-16 md:h-20">
         <div className="flex items-center gap-3">
           <img
-            src={LOGO_URL}
+            src={logoUrl || LOGO_URL}
             alt="Vip Estetic"
             className="h-8 md:h-10 w-auto"
           />
@@ -674,13 +747,17 @@ function AdminPanel({
   aiApiKeyInput,
   onAiApiKeyChange,
   onAiApiKeySave,
+  onSaveDefaultReportEmail,
   onToggleWebhook,
   onWebhookUrlSave,
   onToggleGoogleCalendar,
   onSetRole,
+  onUpdateUserProfile,
+  onCreateUser,
 }: {
   settings?: {
     aiApiKeyConfigured: boolean;
+    reportDefaultEmail: string | null;
     webhookUrl: string | null;
     webhookEnabled: boolean;
     googleCalendarEnabled: boolean;
@@ -690,20 +767,51 @@ function AdminPanel({
     name: string | null;
     email: string | null;
     role: "user" | "admin" | "recorder";
+    reportEmail?: string | null;
+    logoUrl?: string | null;
   }>;
   aiApiKeyInput: string;
   onAiApiKeyChange: (value: string) => void;
   onAiApiKeySave: () => void;
+  onSaveDefaultReportEmail: (email: string | null) => void;
   onToggleWebhook: (enabled: boolean) => void;
   onWebhookUrlSave: (url: string | null) => void;
   onToggleGoogleCalendar: (enabled: boolean) => void;
   onSetRole: (openId: string, role: "user" | "admin" | "recorder") => void;
+  onUpdateUserProfile: (input: {
+    openId: string;
+    reportEmail?: string | null;
+    logoUrl?: string | null;
+  }) => void;
+  onCreateUser: (input: {
+    openId: string;
+    name?: string;
+    email?: string;
+    role?: "user" | "admin" | "recorder";
+    reportEmail?: string | null;
+    logoUrl?: string | null;
+  }) => void;
 }) {
   const [webhookInput, setWebhookInput] = useState(settings?.webhookUrl || "");
+  const [defaultReportEmailInput, setDefaultReportEmailInput] = useState(
+    settings?.reportDefaultEmail || ""
+  );
+  const [newUserOpenId, setNewUserOpenId] = useState("");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserRole, setNewUserRole] = useState<"user" | "admin" | "recorder">(
+    "user"
+  );
+  const [newUserReportEmail, setNewUserReportEmail] = useState("");
+  const [newUserLogoUrl, setNewUserLogoUrl] = useState("");
 
   useEffect(() => {
     setWebhookInput(settings?.webhookUrl || "");
   }, [settings?.webhookUrl]);
+
+  useEffect(() => {
+    setDefaultReportEmailInput(settings?.reportDefaultEmail || "");
+  }, [settings?.reportDefaultEmail]);
 
   return (
     <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm mb-6">
@@ -724,6 +832,24 @@ function AdminPanel({
               }
             />
             <Button onClick={onAiApiKeySave}>Salvar</Button>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <Label>E-mail padrão de destino dos relatórios</Label>
+          <div className="flex gap-2">
+            <Input
+              value={defaultReportEmailInput}
+              onChange={e => setDefaultReportEmailInput(e.target.value)}
+              placeholder="relatorios@empresa.com"
+            />
+            <Button
+              variant="outline"
+              onClick={() =>
+                onSaveDefaultReportEmail(defaultReportEmailInput.trim() || null)
+              }
+            >
+              Salvar
+            </Button>
           </div>
         </div>
         <div className="space-y-2">
@@ -762,26 +888,105 @@ function AdminPanel({
         <div className="space-y-2">
           <Label>Perfis de Usuário</Label>
           {users.map(u => (
-            <div key={u.openId} className="flex gap-2 items-center">
-              <div className="text-xs flex-1">
-                {u.name || u.email || u.openId}
+            <div key={u.openId} className="space-y-2 border rounded p-2">
+              <div className="text-xs font-semibold">
+                {u.name || u.email || u.openId} ({u.openId})
               </div>
-              <select
-                className="border rounded px-2 py-1 text-sm"
-                value={u.role}
-                onChange={e =>
-                  onSetRole(
-                    u.openId,
-                    e.target.value as "user" | "admin" | "recorder"
-                  )
-                }
-              >
-                <option value="user">user</option>
-                <option value="admin">admin</option>
-                <option value="recorder">recorder</option>
-              </select>
+              <div className="flex gap-2 items-center">
+                <select
+                  className="border rounded px-2 py-1 text-sm"
+                  value={u.role}
+                  onChange={e =>
+                    onSetRole(
+                      u.openId,
+                      e.target.value as "user" | "admin" | "recorder"
+                    )
+                  }
+                >
+                  <option value="user">user</option>
+                  <option value="admin">admin</option>
+                  <option value="recorder">recorder</option>
+                </select>
+              </div>
+              <div className="flex gap-2">
+                <Input
+                  defaultValue={u.reportEmail || ""}
+                  placeholder="email destino relatório"
+                  onBlur={e =>
+                    onUpdateUserProfile({
+                      openId: u.openId,
+                      reportEmail: e.target.value.trim() || null,
+                    })
+                  }
+                />
+                <Input
+                  defaultValue={u.logoUrl || ""}
+                  placeholder="URL da logo personalizada"
+                  onBlur={e =>
+                    onUpdateUserProfile({
+                      openId: u.openId,
+                      logoUrl: e.target.value.trim() || null,
+                    })
+                  }
+                />
+              </div>
             </div>
           ))}
+        </div>
+        <div className="space-y-2">
+          <Label>Cadastrar novo usuário</Label>
+          <Input
+            value={newUserOpenId}
+            onChange={e => setNewUserOpenId(e.target.value)}
+            placeholder="openId único (ex: user-joao)"
+          />
+          <Input
+            value={newUserName}
+            onChange={e => setNewUserName(e.target.value)}
+            placeholder="Nome"
+          />
+          <Input
+            value={newUserEmail}
+            onChange={e => setNewUserEmail(e.target.value)}
+            placeholder="E-mail login"
+          />
+          <div className="flex gap-2">
+            <select
+              className="border rounded px-2 py-1 text-sm"
+              value={newUserRole}
+              onChange={e =>
+                setNewUserRole(e.target.value as "user" | "admin" | "recorder")
+              }
+            >
+              <option value="user">user</option>
+              <option value="admin">admin</option>
+              <option value="recorder">recorder</option>
+            </select>
+            <Input
+              value={newUserReportEmail}
+              onChange={e => setNewUserReportEmail(e.target.value)}
+              placeholder="E-mail destino relatório"
+            />
+          </div>
+          <Input
+            value={newUserLogoUrl}
+            onChange={e => setNewUserLogoUrl(e.target.value)}
+            placeholder="URL da logo personalizada"
+          />
+          <Button
+            onClick={() =>
+              onCreateUser({
+                openId: newUserOpenId.trim(),
+                name: newUserName.trim() || undefined,
+                email: newUserEmail.trim() || undefined,
+                role: newUserRole,
+                reportEmail: newUserReportEmail.trim() || null,
+                logoUrl: newUserLogoUrl.trim() || null,
+              })
+            }
+          >
+            Cadastrar usuário
+          </Button>
         </div>
       </CardContent>
     </Card>
