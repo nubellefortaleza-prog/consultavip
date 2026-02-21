@@ -1,3 +1,4 @@
+import { getAppSettings } from "../db";
 import { ENV } from "./env";
 
 export type Role = "system" | "user" | "assistant" | "tool" | "function";
@@ -144,12 +145,14 @@ function resolveAiEndpoint() {
   return "https://api.openai.com/v1/chat/completions";
 }
 
-function resolveAiKey() {
-  return ENV.aiApiKey || ENV.forgeApiKey;
+async function resolveAiKey() {
+  const settings = await getAppSettings().catch(() => null);
+  const settingsKey = settings?.aiApiKey?.trim();
+  return settingsKey || ENV.aiApiKey || ENV.forgeApiKey;
 }
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  const apiKey = resolveAiKey();
+  const apiKey = await resolveAiKey();
   if (!apiKey) {
     throw new Error("AI_API_KEY/OPENAI_API_KEY (ou chave legada Forge) não configurada");
   }
