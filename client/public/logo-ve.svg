@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1200" role="img" aria-label="Vip Estetic logo">
+  <rect width="1200" height="1200" fill="#ffffff" />
+  <circle cx="600" cy="600" r="585" fill="none" stroke="#b97f68" stroke-width="14" />
+  <g fill="#b97f68" font-family="Cormorant Garamond, Georgia, serif" font-weight="600">
+    <text x="360" y="820" font-size="640" letter-spacing="-18">V</text>
+    <text x="560" y="820" font-size="640" letter-spacing="-30">E</text>
+    <text x="930" y="380" font-size="90" font-family="Inter, Arial, sans-serif">®</text>
+  </g>
+</svg>
