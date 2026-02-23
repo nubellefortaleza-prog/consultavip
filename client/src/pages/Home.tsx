@@ -28,6 +28,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 const LOGO_URL = "/logo-ve.svg";
 const APPLE_TOUCH_ICON_ID = "apple-touch-icon-dynamic";
+const LOCAL_DRAFT_KEY = "consultavip_local_drafts";
 
 type AppStep =
   | "record"
@@ -80,6 +81,7 @@ export default function Home() {
   const recorder = useAudioRecorder();
   const [step, setStep] = useState<AppStep>("record");
   const [consultationId, setConsultationId] = useState<number | null>(null);
+  const [audioUrl, setAudioUrl] = useState("");
   const [transcription, setTranscription] = useState("");
   const [report, setReport] = useState<ReportData>({
     patientName: "",
@@ -168,6 +170,7 @@ export default function Home() {
           mimeType: blob.type || "audio/webm",
         });
         setConsultationId(uploadResult.consultationId);
+        setAudioUrl(uploadResult.audioUrl);
 
         setStep("transcribing");
         const transcribeResult = await transcribeMutation.mutateAsync({
@@ -350,6 +353,7 @@ export default function Home() {
   const handleNewConsultation = useCallback(() => {
     setStep("record");
     setConsultationId(null);
+    setAudioUrl("");
     setTranscription("");
     setReport({
       patientName: "",
@@ -365,6 +369,25 @@ export default function Home() {
     lastBlobRef.current = null;
     processingRef.current = false;
   }, [recorder]);
+
+  useEffect(() => {
+    if (!consultationId) return;
+
+    const existing = localStorage.getItem(LOCAL_DRAFT_KEY);
+    const drafts = existing
+      ? (JSON.parse(existing) as Record<string, unknown>)
+      : {};
+
+    drafts[String(consultationId)] = {
+      consultationId,
+      audioUrl,
+      transcription,
+      report,
+      updatedAt: new Date().toISOString(),
+    };
+
+    localStorage.setItem(LOCAL_DRAFT_KEY, JSON.stringify(drafts));
+  }, [consultationId, audioUrl, transcription, report]);
 
   const updateReportField = useCallback(
     (field: keyof ReportData, value: string) => {

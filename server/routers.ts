@@ -400,6 +400,8 @@ Retorne um JSON com estes campos:
         });
 
         try {
+          const consultation = await getConsultationById(input.consultationId);
+
           const [settings, userData] = await Promise.all([
             getAppSettings().catch(() => null),
             getUserByOpenId(ctx.user.openId).catch(() => null),
@@ -409,11 +411,59 @@ Retorne um JSON com estes campos:
             settings?.reportDefaultEmail ||
             FALLBACK_DESTINATION_EMAIL;
 
+          const pdfBase64 = createSimplePdfBase64("Relatório de Consulta", [
+            `Paciente: ${input.patientName}`,
+            `Data: ${input.consultationDate}`,
+            `Perfil: ${input.patientProfile}`,
+            `Queixas: ${input.mainComplaints}`,
+            `Plano: ${input.treatmentPlan}`,
+            `Orçamento: ${input.budgetPresented}`,
+            `Fechado: ${input.closedDeal}`,
+            `Observações: ${input.additionalNotes}`,
+          ]);
+
+          const attachments: {
+            filename: string;
+            content: Buffer;
+            contentType: string;
+          }[] = [
+            {
+              filename: `relatorio-consulta-${input.consultationId}.pdf`,
+              content: Buffer.from(pdfBase64, "base64"),
+              contentType: "application/pdf",
+            },
+          ];
+
+          if (consultation?.audioUrl) {
+            try {
+              const audioResponse = await fetch(consultation.audioUrl);
+              if (audioResponse.ok) {
+                const audioBuffer = Buffer.from(
+                  await audioResponse.arrayBuffer()
+                );
+                const audioExt =
+                  consultation.audioKey?.split(".").pop() || "webm";
+                attachments.push({
+                  filename: `audio-consulta-${input.consultationId}.${audioExt}`,
+                  content: audioBuffer,
+                  contentType:
+                    audioResponse.headers.get("content-type") || "audio/webm",
+                });
+              }
+            } catch (error) {
+              console.warn(
+                "[Email] Não foi possível anexar áudio da consulta",
+                error
+              );
+            }
+          }
+
           await sendEmail({
             to: destinationEmail,
             subject,
             text: reportText,
             html: htmlReport,
+            attachments,
           });
 
           await updateConsultation(input.consultationId, {
