@@ -83,7 +83,7 @@ export const appRouter = router({
                     type: "file_url" as const,
                     file_url: {
                       url: input.audioUrl,
-                      mime_type: "audio/wav" as const,
+                      mime_type: "audio/webm" as const,
                     },
                   },
                   {

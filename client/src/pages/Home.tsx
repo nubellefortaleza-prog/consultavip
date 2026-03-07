@@ -102,26 +102,23 @@ export default function Home() {
     }
   }, [uploadMutation, transcribeMutation, generateReportMutation]);
 
-  // Watch for audioBlob changes after stopping
-  const lastBlobRef = useRef<Blob | null>(null);
+  // waitingForBlob: flag that signals we stopped recording and are waiting for the blob
+  const waitingForBlobRef = useRef(false);
+  const processAudioRef = useRef(processAudio);
+  useEffect(() => { processAudioRef.current = processAudio; }, [processAudio]);
+
+  // Automatically trigger processing when blob becomes available after stop
   useEffect(() => {
-    if (recorder.audioBlob && recorder.audioBlob !== lastBlobRef.current && recorder.state === "stopped" && step === "record") {
-      lastBlobRef.current = recorder.audioBlob;
+    if (waitingForBlobRef.current && recorder.audioBlob && recorder.state === "stopped" && step === "record") {
+      waitingForBlobRef.current = false;
+      processAudioRef.current(recorder.audioBlob);
     }
   }, [recorder.audioBlob, recorder.state, step]);
 
   const handleStopAndProcess = useCallback(() => {
+    waitingForBlobRef.current = true;
     recorder.stopRecording();
-    // Wait for blob to be available
-    const checkBlob = setInterval(() => {
-      if (recorder.audioBlob || lastBlobRef.current) {
-        clearInterval(checkBlob);
-        const blob = recorder.audioBlob || lastBlobRef.current;
-        if (blob) processAudio(blob);
-      }
-    }, 200);
-    setTimeout(() => clearInterval(checkBlob), 10000);
-  }, [recorder, processAudio]);
+  }, [recorder]);
 
   const handleProcessStopped = useCallback(() => {
     const blob = recorder.audioBlob;

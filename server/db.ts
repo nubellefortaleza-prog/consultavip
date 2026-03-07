@@ -1,9 +1,10 @@
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, consultations, InsertConsultation } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
+let _initialized = false;
 
 // Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
@@ -15,7 +16,56 @@ export async function getDb() {
       _db = null;
     }
   }
+  if (_db && !_initialized) {
+    _initialized = true;
+    await initializeSchema(_db);
+  }
   return _db;
+}
+
+async function initializeSchema(db: ReturnType<typeof drizzle>) {
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`users\` (
+        \`id\` int AUTO_INCREMENT NOT NULL,
+        \`openId\` varchar(64) NOT NULL,
+        \`name\` text,
+        \`email\` varchar(320),
+        \`loginMethod\` varchar(64),
+        \`role\` enum('user','admin') NOT NULL DEFAULT 'user',
+        \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+        \`updatedAt\` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+        \`lastSignedIn\` timestamp NOT NULL DEFAULT (now()),
+        CONSTRAINT \`users_id\` PRIMARY KEY(\`id\`),
+        CONSTRAINT \`users_openId_unique\` UNIQUE(\`openId\`)
+      )
+    `);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`consultations\` (
+        \`id\` int AUTO_INCREMENT NOT NULL,
+        \`userId\` int NOT NULL,
+        \`audioUrl\` text,
+        \`audioKey\` varchar(512),
+        \`transcription\` text,
+        \`patientName\` varchar(255),
+        \`consultationDate\` varchar(64),
+        \`patientProfile\` text,
+        \`mainComplaints\` text,
+        \`treatmentPlan\` text,
+        \`budgetPresented\` text,
+        \`closedDeal\` text,
+        \`additionalNotes\` text,
+        \`emailSent\` enum('yes','no') NOT NULL DEFAULT 'no',
+        \`emailSentAt\` timestamp,
+        \`createdAt\` timestamp NOT NULL DEFAULT (now()),
+        \`updatedAt\` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT \`consultations_id\` PRIMARY KEY(\`id\`)
+      )
+    `);
+    console.log("[Database] Schema initialized successfully");
+  } catch (error) {
+    console.warn("[Database] Schema initialization warning:", error);
+  }
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
