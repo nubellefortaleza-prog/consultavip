@@ -12,6 +12,8 @@ uname -a
 pwd
 ```
 
+Se aparecer `Permission denied (publickey,password)` ao rodar `ssh root@IP`, isso é problema de credencial SSH (não do app). Resolva o acesso primeiro no painel da hospedagem (senha correta, porta SSH correta ou chave pública autorizada).
+
 ## 2) Clonar o projeto corretamente
 
 > Não use `< >` no comando de clone.
@@ -30,6 +32,14 @@ Se o repositório for privado e pedir senha do GitHub, use token (PAT) ou chave 
 ```bash
 pnpm install
 pnpm build
+```
+
+Se `pnpm` não existir:
+
+```bash
+apt update
+apt install -y nodejs npm
+npm i -g pnpm pm2
 ```
 
 ## 4) Criar `.env`
@@ -66,14 +76,39 @@ pnpm db:push
 
 Se aparecer `DATABASE_URL is required`, o `.env` não está preenchido corretamente.
 
+Se aparecer `Access denied for user 'root'@'localhost'` no MySQL (erro 1698), configure usuário de app com senha e atualize o `DATABASE_URL`:
+
+```bash
+mysql -u root <<'SQL'
+CREATE DATABASE IF NOT EXISTS consultavip;
+CREATE USER IF NOT EXISTS 'consultavip'@'127.0.0.1' IDENTIFIED BY 'troque-essa-senha';
+GRANT ALL PRIVILEGES ON consultavip.* TO 'consultavip'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+```
+
+No `.env`:
+
+```env
+DATABASE_URL=mysql://consultavip:troque-essa-senha@127.0.0.1:3306/consultavip
+```
+
+E rode novamente:
+
+```bash
+pnpm db:push
+```
+
 ## 6) Subir com PM2 sem duplicidade
 
 ```bash
 cd /var/www/consultavip
 pm2 delete consultavip || true
-pm2 start ecosystem.config.cjs --only consultavip --update-env
+pnpm run pm2:start
 pm2 save
 ```
+
+> Use `pnpm run pm2:start` (com `run`). Em alguns ambientes `pnpm pm2:start` falha com `Command "pm2:start" not found`.
 
 ## 7) Validar processo e porta
 
@@ -82,6 +117,8 @@ pm2 ls
 pm2 logs consultavip --lines 100
 ss -ltnp | grep :3000
 ```
+
+Se não mostrar porta 3000, o processo ainda não subiu — verifique os logs do PM2.
 
 ## 8) Nginx (proxy para app)
 
