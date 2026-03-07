@@ -7,13 +7,45 @@ import { TRPCError } from "@trpc/server";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import { invokeLLM } from "./_core/llm";
 import { storagePut } from "./storage";
-import { createConsultation, updateConsultation, getConsultationById, getConsultationsByUser } from "./db";
+import {
+  createConsultation,
+  updateConsultation,
+  getAppSettings,
+  getUserByOpenId,
+  getConsultationById,
+  getConsultationsByUser,
+} from "./db";
 import { nanoid } from "nanoid";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./_core/env";
 import { sendEmail } from "./email";
+import { createSimplePdfBase64 } from "./pdf";
 
-const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
+const ensureCanOnlyRecord = (role: string | undefined) => {
+  if (role === "recorder") {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Seu perfil permite apenas gravar e transcrever reuniões.",
+    });
+  }
+};
+
+const triggerWebhookIfEnabled = async (payload: Record<string, unknown>) => {
+  const settings = await getAppSettings().catch(() => null);
+  if (!settings?.webhookEnabled || !settings.webhookUrl) return;
+
+  try {
+    await fetch(settings.webhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
+    console.warn("[Webhook] Failed to send payload", error);
+  }
+};
+
+const FALLBACK_DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
 export const appRouter = router({
   system: systemRouter,
@@ -28,20 +60,33 @@ export const appRouter = router({
 
   consultation: router({
     uploadAudio: protectedProcedure
-      .input(z.object({
-        audioBase64: z.string(),
-        mimeType: z.string().default("audio/webm"),
-      }))
+      .input(
+        z.object({
+          audioBase64: z.string(),
+          mimeType: z.string().default("audio/webm"),
+        })
+      )
       .mutation(async ({ input, ctx }) => {
         const buffer = Buffer.from(input.audioBase64, "base64");
         const sizeMB = buffer.length / (1024 * 1024);
         if (sizeMB > 16) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "O arquivo de áudio excede o limite de 16MB." });
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "O arquivo de áudio excede o limite de 16MB.",
+          });
         }
-        const ext = input.mimeType.includes("webm") ? "webm" : input.mimeType.includes("mp4") ? "m4a" : "wav";
+        const ext = input.mimeType.includes("webm")
+          ? "webm"
+          : input.mimeType.includes("mp4")
+            ? "m4a"
+            : "wav";
         const fileKey = `consultations/${ctx.user.id}/${nanoid()}.${ext}`;
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
-        const consultationId = await createConsultation({ userId: ctx.user.id, audioUrl: url, audioKey: fileKey });
+        const consultationId = await createConsultation({
+          userId: ctx.user.id,
+          audioUrl: url,
+          audioKey: fileKey,
+        });
         return { consultationId, audioUrl: url };
       }),
 
@@ -53,15 +98,23 @@ export const appRouter = router({
           const whisperResult = await transcribeAudio({
             audioUrl: input.audioUrl,
             language: "pt",
-            prompt: "Transcrição de consulta médica estética em português brasileiro. Termos: botox, preenchimento, harmonização facial, bioestimulador, skinbooster, peeling, laser, ácido hialurônico.",
+            prompt:
+              "Transcrição de consulta médica estética em português brasileiro. Termos: botox, preenchimento, harmonização facial, bioestimulador, skinbooster, peeling, laser, ácido hialurônico.",
           });
 
           if (!("error" in whisperResult)) {
-            await updateConsultation(input.consultationId, { transcription: whisperResult.text });
+            await updateConsultation(input.consultationId, {
+              transcription: whisperResult.text,
+              fullTranscription: whisperResult.text,
+            });
             return { text: whisperResult.text, source: "whisper" };
           }
 
-          console.log(`[Transcription] Whisper attempt ${attempt + 1} failed:`, whisperResult.error, whisperResult.details || "");
+          console.log(
+            `[Transcription] Whisper attempt ${attempt + 1} failed:`,
+            whisperResult.error,
+            whisperResult.details || ""
+          );
           if (attempt === 0) {
             await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
           }
@@ -69,12 +122,15 @@ export const appRouter = router({
 
         // Attempt 2: Use invokeLLM (Forge API) with file_url for audio transcription
         try {
-          console.log("[Transcription] Falling back to invokeLLM with file_url...");
+          console.log(
+            "[Transcription] Falling back to invokeLLM with file_url..."
+          );
           const llmResult = await invokeLLM({
             messages: [
               {
                 role: "system",
-                content: "Você é um transcritor profissional. Transcreva o áudio da consulta médica estética em português brasileiro de forma completa e precisa. Retorne APENAS a transcrição, sem comentários, títulos ou formatação adicional.",
+                content:
+                  "Você é um transcritor profissional. Transcreva o áudio da consulta médica estética em português brasileiro de forma completa e precisa. Retorne APENAS a transcrição, sem comentários, títulos ou formatação adicional.",
               },
               {
                 role: "user",
@@ -95,12 +151,16 @@ export const appRouter = router({
             ],
           });
 
-          const transcription = typeof llmResult.choices[0]?.message?.content === "string"
-            ? llmResult.choices[0].message.content
-            : "";
+          const transcription =
+            typeof llmResult.choices[0]?.message?.content === "string"
+              ? llmResult.choices[0].message.content
+              : "";
 
           if (transcription.trim()) {
-            await updateConsultation(input.consultationId, { transcription });
+            await updateConsultation(input.consultationId, {
+              transcription,
+              fullTranscription: transcription,
+            });
             return { text: transcription, source: "llm" };
           }
           throw new Error("LLM não retornou transcrição");
@@ -115,7 +175,8 @@ export const appRouter = router({
           console.log("[Transcription] Falling back to Gemini direct API...");
 
           const audioResp = await fetch(input.audioUrl);
-          if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
+          if (!audioResp.ok)
+            throw new Error(`Failed to download audio: ${audioResp.status}`);
           const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
           const base64Audio = audioBuffer.toString("base64");
 
@@ -127,30 +188,52 @@ export const appRouter = router({
                 role: "user",
                 parts: [
                   { inlineData: { data: base64Audio, mimeType: "audio/webm" } },
-                  { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
+                  {
+                    text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais.",
+                  },
                 ],
               },
             ],
           });
           const transcription = response.text || "";
-          if (!transcription) throw new Error("Gemini não retornou transcrição");
-          await updateConsultation(input.consultationId, { transcription });
+          if (!transcription)
+            throw new Error("Gemini não retornou transcrição");
+          await updateConsultation(input.consultationId, {
+            transcription,
+            fullTranscription: transcription,
+          });
           return { text: transcription, source: "gemini" };
         } catch (geminiErr: any) {
-          console.error("[Transcription] Gemini fallback failed:", geminiErr.message);
+          console.error(
+            "[Transcription] Gemini fallback failed:",
+            geminiErr.message
+          );
           throw new TRPCError({
             code: "INTERNAL_SERVER_ERROR",
-            message: "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
+            message:
+              "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
           });
         }
       }),
 
     generateReport: protectedProcedure
-      .input(z.object({ consultationId: z.number(), transcription: z.string() }))
-      .mutation(async ({ input }) => {
+      .input(
+        z.object({ consultationId: z.number(), transcription: z.string() })
+      )
+      .mutation(async ({ input, ctx }) => {
+        ensureCanOnlyRecord(ctx.user.role);
         const now = new Date();
-        const dateStr = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "America/Fortaleza" });
-        const timeStr = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Fortaleza" });
+        const dateStr = now.toLocaleDateString("pt-BR", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          timeZone: "America/Fortaleza",
+        });
+        const timeStr = now.toLocaleTimeString("pt-BR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "America/Fortaleza",
+        });
 
         const systemPrompt = `Você é um assistente especializado em clínicas de estética. Analise a transcrição de uma consulta médica estética e preencha o relatório estruturado.
 
@@ -167,7 +250,10 @@ Retorne um JSON com estes campos:
         const result = await invokeLLM({
           messages: [
             { role: "system", content: systemPrompt },
-            { role: "user", content: `Transcrição da consulta:\n\n${input.transcription}` },
+            {
+              role: "user",
+              content: `Transcrição da consulta:\n\n${input.transcription}`,
+            },
           ],
           response_format: {
             type: "json_schema",
@@ -186,7 +272,16 @@ Retorne um JSON com estes campos:
                   closedDeal: { type: "string" },
                   additionalNotes: { type: "string" },
                 },
-                required: ["patientName", "consultationDate", "patientProfile", "mainComplaints", "treatmentPlan", "budgetPresented", "closedDeal", "additionalNotes"],
+                required: [
+                  "patientName",
+                  "consultationDate",
+                  "patientProfile",
+                  "mainComplaints",
+                  "treatmentPlan",
+                  "budgetPresented",
+                  "closedDeal",
+                  "additionalNotes",
+                ],
                 additionalProperties: false,
               },
             },
@@ -195,7 +290,10 @@ Retorne um JSON com estes campos:
 
         const content = result.choices[0]?.message?.content;
         if (!content || typeof content !== "string") {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao gerar relatório com IA." });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: "Falha ao gerar relatório com IA.",
+          });
         }
 
         const report = JSON.parse(content);
@@ -214,37 +312,44 @@ Retorne um JSON com estes campos:
       }),
 
     saveReport: protectedProcedure
-      .input(z.object({
-        consultationId: z.number(),
-        patientName: z.string(),
-        consultationDate: z.string(),
-        patientProfile: z.string(),
-        mainComplaints: z.string(),
-        treatmentPlan: z.string(),
-        budgetPresented: z.string(),
-        closedDeal: z.string(),
-        additionalNotes: z.string(),
-      }))
-      .mutation(async ({ input }) => {
+      .input(
+        z.object({
+          consultationId: z.number(),
+          patientName: z.string(),
+          consultationDate: z.string(),
+          patientProfile: z.string(),
+          mainComplaints: z.string(),
+          treatmentPlan: z.string(),
+          budgetPresented: z.string(),
+          closedDeal: z.string(),
+          additionalNotes: z.string(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        ensureCanOnlyRecord(ctx.user.role);
         const { consultationId, ...data } = input;
         await updateConsultation(consultationId, data);
         return { success: true };
       }),
 
     sendEmail: protectedProcedure
-      .input(z.object({
-        consultationId: z.number(),
-        patientName: z.string(),
-        consultationDate: z.string(),
-        patientProfile: z.string(),
-        mainComplaints: z.string(),
-        treatmentPlan: z.string(),
-        budgetPresented: z.string(),
-        closedDeal: z.string(),
-        additionalNotes: z.string(),
-      }))
-      .mutation(async ({ input }) => {
-        const dateForSubject = input.consultationDate.split(" ")[0] || input.consultationDate;
+      .input(
+        z.object({
+          consultationId: z.number(),
+          patientName: z.string(),
+          consultationDate: z.string(),
+          patientProfile: z.string(),
+          mainComplaints: z.string(),
+          treatmentPlan: z.string(),
+          budgetPresented: z.string(),
+          closedDeal: z.string(),
+          additionalNotes: z.string(),
+        })
+      )
+      .mutation(async ({ input, ctx }) => {
+        ensureCanOnlyRecord(ctx.user.role);
+        const dateForSubject =
+          input.consultationDate.split(" ")[0] || input.consultationDate;
         const subject = `${input.patientName} - ${dateForSubject}`;
 
         const reportText = [
@@ -273,41 +378,157 @@ Retorne um JSON com estes campos:
           ["Orçamento Apresentado", input.budgetPresented],
           ["O que foi Fechado", input.closedDeal],
           ["Observações Adicionais", input.additionalNotes],
-        ].map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
+        ]
+          .map(
+            ([label, value]) =>
+              `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`
+          )
+          .join(
+            ""
+          )}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
 
         // Save report data first
         await updateConsultation(input.consultationId, {
-          patientName: input.patientName, consultationDate: input.consultationDate,
-          patientProfile: input.patientProfile, mainComplaints: input.mainComplaints,
-          treatmentPlan: input.treatmentPlan, budgetPresented: input.budgetPresented,
-          closedDeal: input.closedDeal, additionalNotes: input.additionalNotes,
+          patientName: input.patientName,
+          consultationDate: input.consultationDate,
+          patientProfile: input.patientProfile,
+          mainComplaints: input.mainComplaints,
+          treatmentPlan: input.treatmentPlan,
+          budgetPresented: input.budgetPresented,
+          closedDeal: input.closedDeal,
+          additionalNotes: input.additionalNotes,
         });
 
         try {
+          const consultation = await getConsultationById(input.consultationId);
+
+          const [settings, userData] = await Promise.all([
+            getAppSettings().catch(() => null),
+            getUserByOpenId(ctx.user.openId).catch(() => null),
+          ]);
+          const destinationEmail =
+            userData?.reportEmail ||
+            settings?.reportDefaultEmail ||
+            FALLBACK_DESTINATION_EMAIL;
+
+          const pdfBase64 = createSimplePdfBase64("Relatório de Consulta", [
+            `Paciente: ${input.patientName}`,
+            `Data: ${input.consultationDate}`,
+            `Perfil: ${input.patientProfile}`,
+            `Queixas: ${input.mainComplaints}`,
+            `Plano: ${input.treatmentPlan}`,
+            `Orçamento: ${input.budgetPresented}`,
+            `Fechado: ${input.closedDeal}`,
+            `Observações: ${input.additionalNotes}`,
+          ]);
+
+          const attachments: {
+            filename: string;
+            content: Buffer;
+            contentType: string;
+          }[] = [
+            {
+              filename: `relatorio-consulta-${input.consultationId}.pdf`,
+              content: Buffer.from(pdfBase64, "base64"),
+              contentType: "application/pdf",
+            },
+          ];
+
+          if (consultation?.audioUrl) {
+            try {
+              const audioResponse = await fetch(consultation.audioUrl);
+              if (audioResponse.ok) {
+                const audioBuffer = Buffer.from(
+                  await audioResponse.arrayBuffer()
+                );
+                const audioExt =
+                  consultation.audioKey?.split(".").pop() || "webm";
+                attachments.push({
+                  filename: `audio-consulta-${input.consultationId}.${audioExt}`,
+                  content: audioBuffer,
+                  contentType:
+                    audioResponse.headers.get("content-type") || "audio/webm",
+                });
+              }
+            } catch (error) {
+              console.warn(
+                "[Email] Não foi possível anexar áudio da consulta",
+                error
+              );
+            }
+          }
+
           await sendEmail({
-            to: DESTINATION_EMAIL,
+            to: destinationEmail,
             subject,
             text: reportText,
             html: htmlReport,
+            attachments,
           });
 
-          await updateConsultation(input.consultationId, { emailSent: "yes", emailSentAt: new Date() });
+          await updateConsultation(input.consultationId, {
+            emailSent: "yes",
+            emailSentAt: new Date(),
+          });
+          await triggerWebhookIfEnabled({
+            event: "consultation.report.sent",
+            consultationId: input.consultationId,
+            patientName: input.patientName,
+            consultationDate: input.consultationDate,
+            closedDeal: input.closedDeal,
+          });
           return { success: true, message: "E-mail enviado com sucesso!" };
         } catch (err: any) {
           console.error("Email send error:", err);
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Relatório salvo. Erro ao enviar e-mail: ${err.message || "Verifique as configurações SMTP."}` });
+          throw new TRPCError({
+            code: "INTERNAL_SERVER_ERROR",
+            message: `Relatório salvo. Erro ao enviar e-mail: ${err.message || "Verifique as configurações SMTP."}`,
+          });
         }
       }),
 
+    downloadPdf: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        ensureCanOnlyRecord(ctx.user.role);
+        const consultation = await getConsultationById(input.id);
+        if (!consultation)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Consulta não encontrada.",
+          });
+
+        const lines = [
+          `Paciente: ${consultation.patientName || "N/A"}`,
+          `Data: ${consultation.consultationDate || "N/A"}`,
+          `Perfil: ${consultation.patientProfile || "N/A"}`,
+          `Queixas: ${consultation.mainComplaints || "N/A"}`,
+          `Plano: ${consultation.treatmentPlan || "N/A"}`,
+          `Orçamento: ${consultation.budgetPresented || "N/A"}`,
+          `Fechado: ${consultation.closedDeal || "N/A"}`,
+          `Observações: ${consultation.additionalNotes || "N/A"}`,
+        ];
+
+        const pdfBase64 = createSimplePdfBase64("Relatório de Consulta", lines);
+        const fileName = `consulta-${input.id}.pdf`;
+        return { fileName, pdfBase64 };
+      }),
+
     list: protectedProcedure.query(async ({ ctx }) => {
+      ensureCanOnlyRecord(ctx.user.role);
       return getConsultationsByUser(ctx.user.id);
     }),
 
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
-      .query(async ({ input }) => {
+      .query(async ({ input, ctx }) => {
+        ensureCanOnlyRecord(ctx.user.role);
         const consultation = await getConsultationById(input.id);
-        if (!consultation) throw new TRPCError({ code: "NOT_FOUND", message: "Consulta não encontrada." });
+        if (!consultation)
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Consulta não encontrada.",
+          });
         return consultation;
       }),
   }),

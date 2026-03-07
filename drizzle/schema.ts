@@ -1,4 +1,12 @@
-import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import {
+  boolean,
+  int,
+  mysqlEnum,
+  mysqlTable,
+  text,
+  timestamp,
+  varchar,
+} from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -15,8 +23,12 @@ export const users = mysqlTable("users", {
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
+  reportEmail: varchar("reportEmail", { length: 320 }),
+  logoUrl: text("logoUrl"),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "recorder"])
+    .default("user")
+    .notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -31,6 +43,8 @@ export const consultations = mysqlTable("consultations", {
   audioUrl: text("audioUrl"),
   audioKey: varchar("audioKey", { length: 512 }),
   transcription: text("transcription"),
+  // Keep integral transcription explicitly for auditing and exports.
+  fullTranscription: text("fullTranscription"),
   patientName: varchar("patientName", { length: 255 }),
   consultationDate: varchar("consultationDate", { length: 64 }),
   patientProfile: text("patientProfile"),
@@ -45,5 +59,19 @@ export const consultations = mysqlTable("consultations", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 
+export const appSettings = mysqlTable("appSettings", {
+  id: int("id").autoincrement().primaryKey(),
+  aiApiKey: text("aiApiKey"),
+  reportDefaultEmail: varchar("reportDefaultEmail", { length: 320 }),
+  webhookUrl: text("webhookUrl"),
+  webhookEnabled: boolean("webhookEnabled").default(false).notNull(),
+  googleCalendarEnabled: boolean("googleCalendarEnabled")
+    .default(false)
+    .notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
 export type Consultation = typeof consultations.$inferSelect;
 export type InsertConsultation = typeof consultations.$inferInsert;
+export type AppSettings = typeof appSettings.$inferSelect;
+export type InsertAppSettings = typeof appSettings.$inferInsert;

@@ -1,4 +1,5 @@
 import nodemailer from "nodemailer";
+import type Mail from "nodemailer/lib/mailer";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
@@ -7,6 +8,7 @@ export interface EmailPayload {
   subject: string;
   text: string;
   html?: string;
+  attachments?: Mail.Attachment[];
 }
 
 /**
@@ -14,12 +16,16 @@ export interface EmailPayload {
  * Uses SMTP_USER and SMTP_PASS environment variables for authentication.
  * Supports Gmail SMTP with App Passwords.
  */
-export async function sendEmail(payload: EmailPayload): Promise<{ success: boolean; messageId?: string }> {
+export async function sendEmail(
+  payload: EmailPayload
+): Promise<{ success: boolean; messageId?: string }> {
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
 
   if (!smtpUser || !smtpPass) {
-    throw new Error("Credenciais SMTP não configuradas. Configure SMTP_USER e SMTP_PASS nas configurações do app.");
+    throw new Error(
+      "Credenciais SMTP não configuradas. Configure SMTP_USER e SMTP_PASS nas configurações do app."
+    );
   }
 
   const transporter = nodemailer.createTransport({
@@ -41,6 +47,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ success: boole
       subject: payload.subject,
       text: payload.text,
       html: payload.html,
+      attachments: payload.attachments,
     });
 
     console.log("[Email] Sent successfully:", info.messageId);

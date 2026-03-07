@@ -1,7 +1,13 @@
 import { eq, desc } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, consultations, InsertConsultation } from "../drizzle/schema";
-import { ENV } from './_core/env';
+import {
+  InsertUser,
+  users,
+  consultations,
+  InsertConsultation,
+  appSettings,
+} from "../drizzle/schema";
+import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
@@ -56,8 +62,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = user.role;
       updateSet.role = user.role;
     } else if (user.openId === ENV.ownerOpenId) {
-      values.role = 'admin';
-      updateSet.role = 'admin';
+      values.role = "admin";
+      updateSet.role = "admin";
     }
 
     if (!values.lastSignedIn) {
@@ -84,7 +90,11 @@ export async function getUserByOpenId(openId: string) {
     return undefined;
   }
 
-  const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
+  const result = await db
+    .select()
+    .from(users)
+    .where(eq(users.openId, openId))
+    .limit(1);
 
   return result.length > 0 ? result[0] : undefined;
 }
@@ -98,7 +108,10 @@ export async function createConsultation(data: InsertConsultation) {
   return result[0].insertId;
 }
 
-export async function updateConsultation(id: number, data: Partial<InsertConsultation>) {
+export async function updateConsultation(
+  id: number,
+  data: Partial<InsertConsultation>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(consultations).set(data).where(eq(consultations.id, id));
@@ -107,12 +120,114 @@ export async function updateConsultation(id: number, data: Partial<InsertConsult
 export async function getConsultationById(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const result = await db.select().from(consultations).where(eq(consultations.id, id)).limit(1);
+  const result = await db
+    .select()
+    .from(consultations)
+    .where(eq(consultations.id, id))
+    .limit(1);
   return result.length > 0 ? result[0] : null;
 }
 
 export async function getConsultationsByUser(userId: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  return db.select().from(consultations).where(eq(consultations.userId, userId)).orderBy(desc(consultations.createdAt));
+  return db
+    .select()
+    .from(consultations)
+    .where(eq(consultations.userId, userId))
+    .orderBy(desc(consultations.createdAt));
+}
+
+export async function listUsers() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  return db.select().from(users).orderBy(desc(users.createdAt));
+}
+
+export async function updateUserRole(
+  openId: string,
+  role: "user" | "admin" | "recorder"
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set({ role }).where(eq(users.openId, openId));
+}
+
+export async function createUserByAdmin(data: {
+  openId: string;
+  name?: string | null;
+  email?: string | null;
+  role?: "user" | "admin" | "recorder";
+  reportEmail?: string | null;
+  logoUrl?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  await db.insert(users).values({
+    openId: data.openId,
+    name: data.name ?? null,
+    email: data.email ?? null,
+    role: data.role ?? "user",
+    reportEmail: data.reportEmail ?? null,
+    logoUrl: data.logoUrl ?? null,
+    loginMethod: "admin_created",
+    lastSignedIn: new Date(),
+  });
+}
+
+export async function updateUserProfileByAdmin(
+  openId: string,
+  data: Partial<{
+    name: string | null;
+    email: string | null;
+    role: "user" | "admin" | "recorder";
+    reportEmail: string | null;
+    logoUrl: string | null;
+  }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(users).set(data).where(eq(users.openId, openId));
+}
+
+export async function getAppSettings() {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const rows = await db.select().from(appSettings).limit(1);
+  if (rows.length > 0) return rows[0];
+
+  const inserted = await db.insert(appSettings).values({});
+  const id = inserted[0]?.insertId;
+  if (!id) return null;
+  const created = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.id, id))
+    .limit(1);
+  return created[0] ?? null;
+}
+
+export async function updateAppSettings(
+  data: Partial<{
+    aiApiKey: string | null;
+    reportDefaultEmail: string | null;
+    webhookUrl: string | null;
+    webhookEnabled: boolean;
+    googleCalendarEnabled: boolean;
+  }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+
+  const current = await getAppSettings();
+  if (!current) throw new Error("Could not initialize app settings");
+
+  await db.update(appSettings).set(data).where(eq(appSettings.id, current.id));
+  const rows = await db
+    .select()
+    .from(appSettings)
+    .where(eq(appSettings.id, current.id))
+    .limit(1);
+  return rows[0] ?? null;
 }
