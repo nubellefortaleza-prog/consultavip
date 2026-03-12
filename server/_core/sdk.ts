@@ -212,18 +212,14 @@ class SDKServer {
       });
       const { openId, appId, name } = payload as Record<string, unknown>;
 
-      if (
-        !isNonEmptyString(openId) ||
-        !isNonEmptyString(appId) ||
-        typeof name !== "string"
-      ) {
-        console.warn("[Auth] Session payload missing required fields");
+      if (!isNonEmptyString(openId) || typeof name !== "string") {
+        console.warn("[Auth] Session payload missing required fields", { openId, name });
         return null;
       }
 
       return {
         openId,
-        appId,
+        appId: typeof appId === "string" ? appId : "",
         name,
       };
     } catch (error) {
