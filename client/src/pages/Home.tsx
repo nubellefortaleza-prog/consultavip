@@ -495,8 +495,38 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
   );
 }
 
+function downloadReport(c: any) {
+  const lines = [
+    "RELATÓRIO DE CONSULTA - VIP ESTETIC",
+    "═".repeat(50),
+    "",
+    `PACIENTE: ${c.patientName || "Não informado"}`,
+    `TELEFONE: ${c.patientPhone || "Não informado"}`,
+    `DATA E HORÁRIO: ${c.consultationDate || "Não informado"}`,
+    `PERFIL: ${c.patientProfile || "Não mencionado"}`,
+    `QUEIXAS PRINCIPAIS: ${c.mainComplaints || "Não mencionado"}`,
+    `PLANO DE TRATAMENTO: ${c.treatmentPlan || "Não mencionado"}`,
+    `ORÇAMENTO APRESENTADO: ${c.budgetPresented || "Não mencionado"}`,
+    `O QUE FOI FECHADO: ${c.closedDeal || "Não mencionado"}`,
+    `OBSERVAÇÕES: ${c.additionalNotes || "Não mencionado"}`,
+    "",
+    "═".repeat(50),
+    "Gerado pelo ConsultaVip - Vip Estetic",
+  ];
+  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (c.patientName || "paciente").replace(/\s+/g, "_");
+  const safePhone = (c.patientPhone || "sem_tel").replace(/\D/g, "");
+  const date = c.consultationDate?.split(" ")[0]?.replace(/\//g, "") || new Date(c.createdAt).toLocaleDateString("pt-BR").replace(/\//g, "");
+  a.href = url;
+  a.download = `Relatorio_${safeName}_${safePhone}_${date}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function HistoryView({ consultations, loading, onBack, onRefresh }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh: () => void }) {
-  const driveStatus = trpc.consultation.driveStatus.useQuery();
+  const driveStatus = trpc.consultation.driveStatus.useQuery(undefined, { retry: false });
   const backupMutation = trpc.consultation.backupToDrive.useMutation({
     onSuccess: () => { toast.success("Áudio enviado para o Google Drive e removido do servidor!"); onRefresh(); },
     onError: (e) => toast.error(e.message),
@@ -509,7 +539,7 @@ function HistoryView({ consultations, loading, onBack, onRefresh }: { consultati
     finally { setBackingUpId(null); }
   };
 
-  const isDriveOn = driveStatus.data?.configured;
+  const isDriveOn = driveStatus.data?.configured === true;
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -517,56 +547,74 @@ function HistoryView({ consultations, loading, onBack, onRefresh }: { consultati
         <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
         <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Histórico de Consultas</h2>
       </div>
-      {!isDriveOn && driveStatus.isFetched && (
-        <div className="mb-4 p-3 rounded-lg bg-[var(--color-vip-silk)]/40 text-xs text-[var(--color-vip-noir)]/60 font-sans">
-          💡 Configure <strong>GOOGLE_SERVICE_ACCOUNT_JSON</strong> no servidor para habilitar backup para o Google Drive.
-        </div>
-      )}
       {loading ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)] mx-auto" /></div>
       ) : consultations.length === 0 ? (
         <Card className="border-0 shadow-md bg-white/80"><CardContent className="p-8 text-center"><p className="text-sm text-[var(--color-vip-noir)]/50 font-sans">Nenhuma consulta registrada ainda.</p></CardContent></Card>
       ) : (
         <div className="space-y-3">
-          {consultations.map((c: any) => (
-            <Card key={c.id} className="border-0 shadow-md bg-white/80 hover:shadow-lg transition-shadow">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm">{c.patientName || "Paciente não identificado"}</h4>
-                    <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mt-1">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
-                    {c.patientPhone && <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">📞 {c.patientPhone}</p>}
+          {consultations.map((c: any) => {
+            const hasReport = c.patientName || c.mainComplaints;
+            return (
+              <Card key={c.id} className="border-0 shadow-md bg-white/80 hover:shadow-lg transition-shadow">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm truncate">
+                        {c.patientName || "Paciente não identificado"}
+                      </h4>
+                      {c.patientPhone && (
+                        <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">📞 {c.patientPhone}</p>
+                      )}
+                      <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-0.5">
+                        {c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {/* Baixar áudio */}
+                      {c.audioUrl && (
+                        <a
+                          href={c.audioUrl}
+                          download
+                          title="Baixar gravação"
+                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors"
+                        >
+                          <Mic className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      {/* Baixar relatório */}
+                      {hasReport && (
+                        <button
+                          onClick={() => downloadReport(c)}
+                          title="Baixar relatório"
+                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {/* Backup para Drive */}
+                      {isDriveOn && c.audioKey && !c.audioUrl?.includes("drive.google.com") && (
+                        <button
+                          onClick={() => handleBackup(c.id)}
+                          disabled={backingUpId === c.id}
+                          title="Enviar para Google Drive e liberar espaço"
+                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-sage)] hover:bg-[var(--color-vip-silk)]/30 transition-colors disabled:opacity-50"
+                        >
+                          {backingUpId === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
+                        </button>
+                      )}
+                      <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
+                        {c.emailSent === "yes" ? "Enviado" : "Pendente"}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {c.audioUrl && (
-                      <a
-                        href={c.audioUrl}
-                        download
-                        title="Baixar áudio"
-                        className="text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] transition-colors"
-                      >
-                        <Download className="w-4 h-4" />
-                      </a>
-                    )}
-                    {isDriveOn && c.audioKey && !c.audioUrl?.includes("drive.google.com") && (
-                      <button
-                        onClick={() => handleBackup(c.id)}
-                        disabled={backingUpId === c.id}
-                        title="Enviar para Google Drive e liberar espaço"
-                        className="text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-sage)] transition-colors disabled:opacity-50"
-                      >
-                        {backingUpId === c.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
-                      </button>
-                    )}
-                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
-                      {c.emailSent === "yes" ? "Enviado" : "Pendente"}
-                    </span>
-                  </div>
-                </div>
-                {c.mainComplaints && c.mainComplaints !== "Não mencionado" && <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>}
-              </CardContent>
-            </Card>
-          ))}
+                  {c.mainComplaints && c.mainComplaints !== "Não mencionado" && (
+                    <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
