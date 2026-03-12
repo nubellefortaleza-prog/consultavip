@@ -16,6 +16,7 @@ import { sdk } from "./_core/sdk";
 import { verifyPassword } from "./_core/auth-utils";
 import fs from "fs/promises";
 import path from "path";
+import { uploadFileToDrive, isDriveConfigured } from "./googleDrive";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
@@ -374,6 +375,55 @@ Retorne um JSON com estes campos:
         if (!consultation) throw new TRPCError({ code: "NOT_FOUND", message: "Consulta não encontrada." });
         return consultation;
       }),
+
+    backupToDrive: protectedProcedure
+      .input(z.object({ consultationId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (!isDriveConfigured()) {
+          throw new TRPCError({
+            code: "PRECONDITION_FAILED",
+            message: "Google Drive não configurado. Adicione GOOGLE_SERVICE_ACCOUNT_JSON no .env do servidor.",
+          });
+        }
+
+        const consultation = await getConsultationById(input.consultationId);
+        if (!consultation || consultation.userId !== ctx.user.id) {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Consulta não encontrada." });
+        }
+        if (!consultation.audioKey) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Esta consulta não possui áudio salvo localmente." });
+        }
+
+        const uploadsDir = process.env.UPLOADS_DIR
+          ? path.resolve(process.env.UPLOADS_DIR)
+          : path.resolve(process.cwd(), "uploads");
+        const filePath = path.join(uploadsDir, consultation.audioKey);
+
+        let fileBuffer: Buffer;
+        try {
+          fileBuffer = await fs.readFile(filePath);
+        } catch {
+          throw new TRPCError({ code: "NOT_FOUND", message: "Arquivo de áudio não encontrado no servidor. Pode já ter sido removido." });
+        }
+
+        const filename = path.basename(consultation.audioKey);
+        const mimeType = filename.endsWith(".mp4") || filename.endsWith(".m4a") ? "audio/mp4" : "audio/webm";
+
+        const { fileId, webViewLink } = await uploadFileToDrive(fileBuffer, filename, mimeType);
+
+        // Delete local file after successful upload
+        await fs.unlink(filePath);
+
+        // Update audioUrl to point to Drive
+        await updateConsultation(input.consultationId, { audioUrl: webViewLink });
+
+        console.log(`[Drive] Backed up and deleted local: ${filePath} → ${webViewLink}`);
+        return { success: true, driveUrl: webViewLink, fileId };
+      }),
+
+    driveStatus: protectedProcedure.query(() => {
+      return { configured: isDriveConfigured() };
+    }),
   }),
 });
 

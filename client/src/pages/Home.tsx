@@ -11,7 +11,7 @@ import { getLoginUrl } from "@/const";
 import { toast } from "sonner";
 import {
   Mic, Square, Pause, Play, Upload, FileText, Send,
-  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History, Download,
+  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History, Download, CloudUpload,
 } from "lucide-react";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
@@ -196,7 +196,7 @@ export default function Home() {
       <AppHeader user={user} onLogout={logout} onToggleHistory={() => setShowHistory(!showHistory)} showHistory={showHistory} />
       <main className="flex-1 container py-6 md:py-10">
         {showHistory ? (
-          <HistoryView consultations={historyQuery.data || []} loading={historyQuery.isLoading} onBack={() => setShowHistory(false)} />
+          <HistoryView consultations={historyQuery.data || []} loading={historyQuery.isLoading} onBack={() => setShowHistory(false)} onRefresh={() => historyQuery.refetch()} />
         ) : (
           <div className="max-w-2xl mx-auto">
             <StepIndicator currentStep={step} />
@@ -495,13 +495,33 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
   );
 }
 
-function HistoryView({ consultations, loading, onBack }: { consultations: any[]; loading: boolean; onBack: () => void }) {
+function HistoryView({ consultations, loading, onBack, onRefresh }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh: () => void }) {
+  const driveStatus = trpc.consultation.driveStatus.useQuery();
+  const backupMutation = trpc.consultation.backupToDrive.useMutation({
+    onSuccess: () => { toast.success("Áudio enviado para o Google Drive e removido do servidor!"); onRefresh(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const [backingUpId, setBackingUpId] = useState<number | null>(null);
+
+  const handleBackup = async (consultationId: number) => {
+    setBackingUpId(consultationId);
+    try { await backupMutation.mutateAsync({ consultationId }); }
+    finally { setBackingUpId(null); }
+  };
+
+  const isDriveOn = driveStatus.data?.configured;
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
         <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Histórico de Consultas</h2>
       </div>
+      {!isDriveOn && driveStatus.isFetched && (
+        <div className="mb-4 p-3 rounded-lg bg-[var(--color-vip-silk)]/40 text-xs text-[var(--color-vip-noir)]/60 font-sans">
+          💡 Configure <strong>GOOGLE_SERVICE_ACCOUNT_JSON</strong> no servidor para habilitar backup para o Google Drive.
+        </div>
+      )}
       {loading ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)] mx-auto" /></div>
       ) : consultations.length === 0 ? (
@@ -515,6 +535,7 @@ function HistoryView({ consultations, loading, onBack }: { consultations: any[];
                   <div>
                     <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm">{c.patientName || "Paciente não identificado"}</h4>
                     <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mt-1">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
+                    {c.patientPhone && <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">📞 {c.patientPhone}</p>}
                   </div>
                   <div className="flex items-center gap-2">
                     {c.audioUrl && (
@@ -526,6 +547,16 @@ function HistoryView({ consultations, loading, onBack }: { consultations: any[];
                       >
                         <Download className="w-4 h-4" />
                       </a>
+                    )}
+                    {isDriveOn && c.audioKey && !c.audioUrl?.includes("drive.google.com") && (
+                      <button
+                        onClick={() => handleBackup(c.id)}
+                        disabled={backingUpId === c.id}
+                        title="Enviar para Google Drive e liberar espaço"
+                        className="text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-sage)] transition-colors disabled:opacity-50"
+                      >
+                        {backingUpId === c.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />}
+                      </button>
                     )}
                     <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
                       {c.emailSent === "yes" ? "Enviado" : "Pendente"}
