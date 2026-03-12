@@ -528,6 +528,8 @@ function downloadReport(c: any) {
 function HistoryView({ consultations, loading, onBack }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void }) {
   // Google Drive: desativado temporariamente
   const isDriveOn = false;
+  const backingUpId: number | null = null;
+  const handleBackup = (_id: number) => {};
 
   return (
     <div className="max-w-2xl mx-auto">
