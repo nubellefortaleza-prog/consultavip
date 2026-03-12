@@ -2,6 +2,7 @@ import { eq, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import { InsertUser, users, consultations, InsertConsultation } from "../drizzle/schema";
 import { ENV } from './_core/env';
+import { hashPassword } from './_core/auth-utils';
 
 let _db: ReturnType<typeof drizzle> | null = null;
 let _initialized = false;
@@ -32,6 +33,7 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         \`name\` text,
         \`email\` varchar(320),
         \`loginMethod\` varchar(64),
+        \`passwordHash\` text,
         \`role\` enum('user','admin') NOT NULL DEFAULT 'user',
         \`createdAt\` timestamp NOT NULL DEFAULT (now()),
         \`updatedAt\` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
@@ -39,6 +41,10 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         CONSTRAINT \`users_id\` PRIMARY KEY(\`id\`),
         CONSTRAINT \`users_openId_unique\` UNIQUE(\`openId\`)
       )
+    `);
+    // Add passwordHash to existing tables (safe to run multiple times)
+    await db.execute(sql`
+      ALTER TABLE \`users\` ADD COLUMN IF NOT EXISTS \`passwordHash\` text
     `);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`consultations\` (
@@ -137,6 +143,45 @@ export async function getUserByOpenId(openId: string) {
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
 
   return result.length > 0 ? result[0] : undefined;
+}
+
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result.length > 0 ? result[0] : undefined;
+}
+
+export async function seedAdminUser(): Promise<void> {
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  if (!adminEmail || !adminPassword) return;
+
+  const db = await getDb();
+  if (!db) return;
+
+  const existing = await getUserByEmail(adminEmail);
+  if (existing) {
+    // Update password hash if it's missing
+    if (!existing.passwordHash) {
+      const passwordHash = await hashPassword(adminPassword);
+      await db.update(users).set({ passwordHash }).where(eq(users.email, adminEmail));
+      console.log("[Auth] Admin password hash updated");
+    }
+    return;
+  }
+
+  const passwordHash = await hashPassword(adminPassword);
+  await db.insert(users).values({
+    openId: `local:${adminEmail}`,
+    name: "Administrador",
+    email: adminEmail,
+    loginMethod: "password",
+    passwordHash,
+    role: "admin",
+    lastSignedIn: new Date(),
+  });
+  console.log("[Auth] Admin user created:", adminEmail);
 }
 
 // --- Consultation helpers ---
