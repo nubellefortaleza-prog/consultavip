@@ -33,6 +33,7 @@ export const consultations = mysqlTable("consultations", {
   audioKey: varchar("audioKey", { length: 512 }),
   transcription: text("transcription"),
   patientName: varchar("patientName", { length: 255 }),
+  patientPhone: varchar("patientPhone", { length: 32 }),
   consultationDate: varchar("consultationDate", { length: 64 }),
   patientProfile: text("patientProfile"),
   mainComplaints: text("mainComplaints"),

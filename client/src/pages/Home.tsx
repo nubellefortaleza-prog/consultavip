@@ -17,7 +17,7 @@ import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
 const LOGO_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310419663032644247/XjbcOchGTMROPEqF.png";
 
-type AppStep = "record" | "uploading" | "transcribing" | "report" | "sending" | "done";
+type AppStep = "info" | "record" | "uploading" | "transcribing" | "report" | "sending" | "done";
 
 type ReportData = {
   patientName: string;
@@ -51,7 +51,9 @@ const SINGLE_LINE_FIELDS: (keyof ReportData)[] = ["patientName", "consultationDa
 export default function Home() {
   const { user, loading: authLoading, isAuthenticated, logout } = useAuth();
   const recorder = useAudioRecorder();
-  const [step, setStep] = useState<AppStep>("record");
+  const [step, setStep] = useState<AppStep>("info");
+  const [patientName, setPatientName] = useState("");
+  const [patientPhone, setPatientPhone] = useState("");
   const [consultationId, setConsultationId] = useState<number | null>(null);
   const [transcription, setTranscription] = useState("");
   const [report, setReport] = useState<ReportData>({
@@ -83,7 +85,7 @@ export default function Home() {
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const uploadResult = await uploadMutation.mutateAsync({ audioBase64: base64, mimeType: blob.type || "audio/webm" });
+      const uploadResult = await uploadMutation.mutateAsync({ audioBase64: base64, mimeType: blob.type || "audio/webm", patientName, patientPhone });
       setConsultationId(uploadResult.consultationId);
 
       setStep("transcribing");
@@ -91,7 +93,7 @@ export default function Home() {
       setTranscription(transcribeResult.text);
 
       const reportResult = await generateReportMutation.mutateAsync({ consultationId: uploadResult.consultationId, transcription: transcribeResult.text });
-      setReport(reportResult);
+      setReport({ ...reportResult, patientName: reportResult.patientName || patientName });
       setStep("report");
       toast.success("Relatório gerado com sucesso!");
     } catch (err: any) {
@@ -140,9 +142,10 @@ export default function Home() {
   }, [consultationId, report, sendEmailMutation]);
 
   const handleNewConsultation = useCallback(() => {
-    setStep("record"); setConsultationId(null); setTranscription("");
+    setStep("info"); setConsultationId(null); setTranscription("");
+    setPatientName(""); setPatientPhone("");
     setReport({ patientName: "", consultationDate: "", patientProfile: "", mainComplaints: "", treatmentPlan: "", budgetPresented: "", closedDeal: "", additionalNotes: "" });
-    recorder.reset(); lastBlobRef.current = null; processingRef.current = false;
+    recorder.reset(); processingRef.current = false;
   }, [recorder]);
 
   const updateReportField = useCallback((field: keyof ReportData, value: string) => {
@@ -197,6 +200,16 @@ export default function Home() {
         ) : (
           <div className="max-w-2xl mx-auto">
             <StepIndicator currentStep={step} />
+
+            {step === "info" && (
+              <PatientInfoCard
+                patientName={patientName}
+                patientPhone={patientPhone}
+                onPatientNameChange={setPatientName}
+                onPatientPhoneChange={setPatientPhone}
+                onConfirm={() => setStep("record")}
+              />
+            )}
 
             {step === "record" && (
               <RecordingCard
@@ -339,8 +352,8 @@ function AppFooter() {
 }
 
 function StepIndicator({ currentStep }: { currentStep: AppStep }) {
-  const steps = [{ key: "record", label: "Gravar" }, { key: "process", label: "Processar" }, { key: "report", label: "Relatório" }, { key: "done", label: "Enviado" }];
-  const getIdx = () => { if (currentStep === "record") return 0; if (["uploading","transcribing"].includes(currentStep)) return 1; if (currentStep === "report" || currentStep === "sending") return 2; return 3; };
+  const steps = [{ key: "info", label: "Paciente" }, { key: "record", label: "Gravar" }, { key: "process", label: "Processar" }, { key: "report", label: "Relatório" }, { key: "done", label: "Enviado" }];
+  const getIdx = () => { if (currentStep === "info") return 0; if (currentStep === "record") return 1; if (["uploading","transcribing"].includes(currentStep)) return 2; if (currentStep === "report" || currentStep === "sending") return 3; return 4; };
   const activeIndex = getIdx();
   return (
     <div className="flex items-center justify-center gap-2 mb-8">
@@ -354,6 +367,61 @@ function StepIndicator({ currentStep }: { currentStep: AppStep }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function PatientInfoCard({ patientName, patientPhone, onPatientNameChange, onPatientPhoneChange, onConfirm }: {
+  patientName: string; patientPhone: string;
+  onPatientNameChange: (v: string) => void; onPatientPhoneChange: (v: string) => void;
+  onConfirm: () => void;
+}) {
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (patientName.trim() && patientPhone.trim()) onConfirm(); };
+  return (
+    <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
+      <CardContent className="p-8 md:p-10">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-silk)] flex items-center justify-center">
+            <Mic className="w-5 h-5 text-[var(--color-vip-noir)]" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Identificação da Paciente</h3>
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Preencha antes de iniciar a gravação</p>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Nome da Paciente</Label>
+            <Input
+              value={patientName}
+              onChange={e => onPatientNameChange(e.target.value)}
+              placeholder="Ex: Maria Silva"
+              required
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Telefone / WhatsApp</Label>
+            <Input
+              value={patientPhone}
+              onChange={e => onPatientPhoneChange(e.target.value)}
+              placeholder="Ex: 85999990000"
+              required
+              type="tel"
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">O telefone será usado como identificador da paciente</p>
+          </div>
+          <Button
+            type="submit"
+            disabled={!patientName.trim() || !patientPhone.trim()}
+            className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
+            size="lg"
+          >
+            <Mic className="w-4 h-4 mr-2" />Iniciar Gravação
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 

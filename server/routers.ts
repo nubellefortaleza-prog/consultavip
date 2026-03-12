@@ -54,6 +54,8 @@ export const appRouter = router({
       .input(z.object({
         audioBase64: z.string(),
         mimeType: z.string().default("audio/webm"),
+        patientName: z.string().min(1),
+        patientPhone: z.string().min(1),
       }))
       .mutation(async ({ input, ctx }) => {
         const buffer = Buffer.from(input.audioBase64, "base64");
@@ -62,9 +64,25 @@ export const appRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "O arquivo de áudio excede o limite de 16MB." });
         }
         const ext = input.mimeType.includes("webm") ? "webm" : input.mimeType.includes("mp4") ? "m4a" : "wav";
-        const fileKey = `consultations/${ctx.user.id}/${nanoid()}.${ext}`;
+
+        // Format filename: NOME_TELEFONE_DDMMAAAA
+        const sanitize = (s: string) =>
+          s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").substring(0, 40);
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, "0");
+        const mm = String(now.getMonth() + 1).padStart(2, "0");
+        const aaaa = now.getFullYear();
+        const filename = `${sanitize(input.patientName)}_${sanitize(input.patientPhone)}_${dd}${mm}${aaaa}.${ext}`;
+        const fileKey = `consultations/${ctx.user.id}/${filename}`;
+
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
-        const consultationId = await createConsultation({ userId: ctx.user.id, audioUrl: url, audioKey: fileKey });
+        const consultationId = await createConsultation({
+          userId: ctx.user.id,
+          audioUrl: url,
+          audioKey: fileKey,
+          patientName: input.patientName,
+          patientPhone: input.patientPhone,
+        });
         return { consultationId, audioUrl: url };
       }),
 

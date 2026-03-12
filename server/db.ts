@@ -48,6 +48,12 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
     } catch (e: any) {
       if (e?.errno !== 1060) throw e; // 1060 = Duplicate column (already exists)
     }
+    // Add patientPhone to existing consultations tables
+    try {
+      await db.execute(sql`ALTER TABLE \`consultations\` ADD COLUMN \`patientPhone\` varchar(32)`);
+    } catch (e: any) {
+      if (e?.errno !== 1060) throw e;
+    }
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`consultations\` (
         \`id\` int AUTO_INCREMENT NOT NULL,
@@ -56,6 +62,7 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         \`audioKey\` varchar(512),
         \`transcription\` text,
         \`patientName\` varchar(255),
+        \`patientPhone\` varchar(32),
         \`consultationDate\` varchar(64),
         \`patientProfile\` text,
         \`mainComplaints\` text,
