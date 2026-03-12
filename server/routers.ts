@@ -69,7 +69,42 @@ export const appRouter = router({
     transcribe: protectedProcedure
       .input(z.object({ consultationId: z.number(), audioUrl: z.string() }))
       .mutation(async ({ input }) => {
-        // Attempt 1: Whisper via Forge API (with retry)
+        // Attempt 1: Gemini direct API with inline audio data (primary for VPS hosting)
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        if (geminiApiKey) {
+          try {
+            console.log("[Transcription] Trying Gemini direct API...");
+            const audioResp = await fetch(input.audioUrl);
+            if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
+            const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+            const base64Audio = audioBuffer.toString("base64");
+            const mimeType = input.audioUrl.endsWith(".mp4") || input.audioUrl.endsWith(".m4a") ? "audio/mp4" : "audio/webm";
+
+            const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+            const response = await ai.models.generateContent({
+              model: "gemini-2.5-flash",
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { inlineData: { data: base64Audio, mimeType } },
+                    { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
+                  ],
+                },
+              ],
+            });
+            const transcription = response.text || "";
+            if (!transcription) throw new Error("Gemini não retornou transcrição");
+            await updateConsultation(input.consultationId, { transcription });
+            return { text: transcription, source: "gemini" };
+          } catch (geminiErr: any) {
+            console.error("[Transcription] Gemini failed:", geminiErr.message);
+          }
+        } else {
+          console.warn("[Transcription] GEMINI_API_KEY não configurada, pulando Gemini.");
+        }
+
+        // Attempt 2: Whisper via Forge API (with retry)
         for (let attempt = 0; attempt < 2; attempt++) {
           const whisperResult = await transcribeAudio({
             audioUrl: input.audioUrl,
@@ -84,13 +119,13 @@ export const appRouter = router({
 
           console.log(`[Transcription] Whisper attempt ${attempt + 1} failed:`, whisperResult.error, whisperResult.details || "");
           if (attempt === 0) {
-            await new Promise(r => setTimeout(r, 2000)); // wait 2s before retry
+            await new Promise(r => setTimeout(r, 2000));
           }
         }
 
-        // Attempt 2: Use invokeLLM (Forge API) with file_url for audio transcription
+        // Attempt 3: Use invokeLLM (Forge API) with file_url for audio transcription
         try {
-          console.log("[Transcription] Falling back to invokeLLM with file_url...");
+          console.log("[Transcription] Trying invokeLLM with file_url...");
           const llmResult = await invokeLLM({
             messages: [
               {
@@ -102,10 +137,7 @@ export const appRouter = router({
                 content: [
                   {
                     type: "file_url" as const,
-                    file_url: {
-                      url: input.audioUrl,
-                      mime_type: "audio/webm" as const,
-                    },
+                    file_url: { url: input.audioUrl, mime_type: "audio/webm" as const },
                   },
                   {
                     type: "text" as const,
@@ -117,9 +149,7 @@ export const appRouter = router({
           });
 
           const transcription = typeof llmResult.choices[0]?.message?.content === "string"
-            ? llmResult.choices[0].message.content
-            : "";
-
+            ? llmResult.choices[0].message.content : "";
           if (transcription.trim()) {
             await updateConsultation(input.consultationId, { transcription });
             return { text: transcription, source: "llm" };
@@ -129,41 +159,12 @@ export const appRouter = router({
           console.error("[Transcription] LLM fallback failed:", llmErr.message);
         }
 
-        // Attempt 3: Gemini direct API with inline audio data
-        try {
-          const geminiApiKey = process.env.GEMINI_API_KEY;
-          if (!geminiApiKey) throw new Error("GEMINI_API_KEY não configurada");
-          console.log("[Transcription] Falling back to Gemini direct API...");
-
-          const audioResp = await fetch(input.audioUrl);
-          if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
-          const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
-          const base64Audio = audioBuffer.toString("base64");
-
-          const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-          const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: [
-              {
-                role: "user",
-                parts: [
-                  { inlineData: { data: base64Audio, mimeType: "audio/webm" } },
-                  { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
-                ],
-              },
-            ],
-          });
-          const transcription = response.text || "";
-          if (!transcription) throw new Error("Gemini não retornou transcrição");
-          await updateConsultation(input.consultationId, { transcription });
-          return { text: transcription, source: "gemini" };
-        } catch (geminiErr: any) {
-          console.error("[Transcription] Gemini fallback failed:", geminiErr.message);
-          throw new TRPCError({
-            code: "INTERNAL_SERVER_ERROR",
-            message: "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
-          });
-        }
+        throw new TRPCError({
+          code: "INTERNAL_SERVER_ERROR",
+          message: !geminiApiKey
+            ? "Transcrição não configurada. Adicione GEMINI_API_KEY no arquivo .env do servidor."
+            : "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
+        });
       }),
 
     generateReport: protectedProcedure
