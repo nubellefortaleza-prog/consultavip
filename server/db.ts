@@ -46,7 +46,9 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
     try {
       await db.execute(sql`ALTER TABLE \`users\` ADD COLUMN \`passwordHash\` text`);
     } catch (e: any) {
-      if (e?.errno !== 1060) throw e; // 1060 = Duplicate column (already exists)
+      // Drizzle wraps mysql2 errors: errno may be on e.cause, not on e directly
+      const errNo = e?.errno ?? e?.cause?.errno;
+      if (errNo !== 1060) console.warn("[Database] passwordHash migration:", e?.message);
     }
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`consultations\` (
@@ -75,7 +77,8 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
     try {
       await db.execute(sql`ALTER TABLE \`consultations\` ADD COLUMN \`patientPhone\` varchar(32)`);
     } catch (e: any) {
-      if (e?.errno !== 1060) console.warn("[Database] patientPhone migration:", e?.message);
+      const errNo = e?.errno ?? e?.cause?.errno;
+      if (errNo !== 1060) console.warn("[Database] patientPhone migration:", e?.message);
     }
     console.log("[Database] Schema initialized successfully");
   } catch (error) {
