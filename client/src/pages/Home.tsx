@@ -11,7 +11,7 @@ import { getLoginUrl } from "@/const";
 import { toast } from "sonner";
 import {
   Mic, Square, Pause, Play, Upload, FileText, Send,
-  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History,
+  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History, Download,
 } from "lucide-react";
 import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 
@@ -448,9 +448,21 @@ function HistoryView({ consultations, loading, onBack }: { consultations: any[];
                     <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm">{c.patientName || "Paciente não identificado"}</h4>
                     <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mt-1">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
-                    {c.emailSent === "yes" ? "Enviado" : "Pendente"}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {c.audioUrl && (
+                      <a
+                        href={c.audioUrl}
+                        download
+                        title="Baixar áudio"
+                        className="text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] transition-colors"
+                      >
+                        <Download className="w-4 h-4" />
+                      </a>
+                    )}
+                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
+                      {c.emailSent === "yes" ? "Enviado" : "Pendente"}
+                    </span>
+                  </div>
                 </div>
                 {c.mainComplaints && c.mainComplaints !== "Não mencionado" && <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>}
               </CardContent>
