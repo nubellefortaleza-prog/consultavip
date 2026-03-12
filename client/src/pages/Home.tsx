@@ -69,6 +69,8 @@ export default function Home() {
   const generateReportMutation = trpc.consultation.generateReport.useMutation();
   const sendEmailMutation = trpc.consultation.sendEmail.useMutation();
   const historyQuery = trpc.consultation.list.useQuery(undefined, { enabled: isAuthenticated && showHistory });
+  const [showServerInfo, setShowServerInfo] = useState(false);
+  const serverInfoQuery = trpc.consultation.serverInfo.useQuery(undefined, { enabled: showServerInfo });
 
   const handleStartRecording = useCallback(async () => {
     try { await recorder.startRecording(); } catch (err: any) { toast.error(err.message || "Erro ao iniciar gravação"); }
@@ -196,7 +198,16 @@ export default function Home() {
       <AppHeader user={user} onLogout={logout} onToggleHistory={() => setShowHistory(!showHistory)} showHistory={showHistory} />
       <main className="flex-1 container py-6 md:py-10">
         {showHistory ? (
-          <HistoryView consultations={historyQuery.data || []} loading={historyQuery.isLoading} onBack={() => setShowHistory(false)} onRefresh={() => historyQuery.refetch()} />
+          <HistoryView
+            consultations={historyQuery.data || []}
+            loading={historyQuery.isLoading}
+            onBack={() => setShowHistory(false)}
+            onRefresh={() => historyQuery.refetch()}
+            showServerInfo={showServerInfo}
+            onToggleServerInfo={() => setShowServerInfo(v => !v)}
+            serverInfo={serverInfoQuery.data}
+            serverInfoLoading={serverInfoQuery.isLoading}
+          />
         ) : (
           <div className="max-w-2xl mx-auto">
             <StepIndicator currentStep={step} />
@@ -525,7 +536,10 @@ function downloadReport(c: any) {
   URL.revokeObjectURL(url);
 }
 
-function HistoryView({ consultations, loading, onBack }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void }) {
+function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleServerInfo, serverInfo, serverInfoLoading }: {
+  consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void;
+  showServerInfo?: boolean; onToggleServerInfo?: () => void; serverInfo?: any; serverInfoLoading?: boolean;
+}) {
   // Google Drive: desativado temporariamente
   const isDriveOn = false;
   const backingUpId: number | null = null;
@@ -536,7 +550,35 @@ function HistoryView({ consultations, loading, onBack }: { consultations: any[];
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
         <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Histórico de Consultas</h2>
+        <button onClick={onToggleServerInfo} title="Diagnóstico do servidor" className="ml-auto text-xs text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-noir)]/60 font-sans px-2 py-1 rounded">⚙</button>
       </div>
+
+      {showServerInfo && (
+        <Card className="border-0 shadow-md bg-white/80 mb-4">
+          <CardContent className="p-4">
+            <p className="text-xs font-semibold text-[var(--color-vip-noir)] mb-2 font-sans">Diagnóstico do Servidor</p>
+            {serverInfoLoading ? (
+              <div className="flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /><span className="text-xs font-sans text-[var(--color-vip-noir)]/50">Carregando...</span></div>
+            ) : serverInfo ? (
+              <div className="space-y-1 text-xs font-mono text-[var(--color-vip-noir)]/70">
+                <p>📁 Pasta uploads: <span className="text-[var(--color-vip-noir)]">{serverInfo.uploadsDir}</span></p>
+                <p>🎵 Arquivos de áudio: <span className="font-bold text-[var(--color-vip-blush)]">{serverInfo.fileCount}</span></p>
+                <p>📋 Consultas no banco: <span className="font-bold text-[var(--color-vip-blush)]">{serverInfo.dbConsultationsForUser}</span></p>
+                <p>🌐 APP_BASE_URL: <span className="text-[var(--color-vip-noir)]">{serverInfo.appBaseUrl}</span></p>
+                <p>🤖 Gemini: <span className={serverInfo.geminiConfigured ? "text-green-600" : "text-red-500"}>{serverInfo.geminiConfigured ? "✓ configurado" : "✗ não configurado"}</span></p>
+                <p>📂 cwd: <span className="text-[var(--color-vip-noir)]/50">{serverInfo.cwd}</span></p>
+                {serverInfo.files.length > 0 && (
+                  <details className="mt-2"><summary className="cursor-pointer text-[var(--color-vip-noir)]/50">Arquivos ({serverInfo.files.length})</summary>
+                    <div className="mt-1 space-y-0.5 pl-2">{serverInfo.files.map((f: string, i: number) => <p key={i} className="text-[var(--color-vip-noir)]/40">{f}</p>)}</div>
+                  </details>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs font-sans text-red-500">Erro ao carregar diagnóstico</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
       {loading ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)] mx-auto" /></div>
       ) : consultations.length === 0 ? (

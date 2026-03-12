@@ -424,6 +424,49 @@ Retorne um JSON com estes campos:
     driveStatus: protectedProcedure.query(() => {
       return { configured: isDriveConfigured() };
     }),
+
+    serverInfo: protectedProcedure.query(async ({ ctx }) => {
+      const uploadsDir = process.env.UPLOADS_DIR
+        ? path.resolve(process.env.UPLOADS_DIR)
+        : path.resolve(process.cwd(), "uploads");
+
+      let fileCount = 0;
+      let files: string[] = [];
+      try {
+        const walk = async (dir: string): Promise<string[]> => {
+          const entries = await fs.readdir(dir, { withFileTypes: true });
+          const results: string[] = [];
+          for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) results.push(...await walk(full));
+            else results.push(full.replace(uploadsDir + "/", ""));
+          }
+          return results;
+        };
+        files = await walk(uploadsDir);
+        fileCount = files.length;
+      } catch {
+        // directory doesn't exist yet
+      }
+
+      // Count consultations in DB
+      let dbCount = 0;
+      try {
+        const rows = await getConsultationsByUser(ctx.user.id);
+        dbCount = rows.length;
+      } catch { /* db error */ }
+
+      return {
+        uploadsDir,
+        fileCount,
+        files: files.slice(0, 50),
+        appBaseUrl: process.env.APP_BASE_URL || "(não definido)",
+        geminiConfigured: !!process.env.GEMINI_API_KEY,
+        dbConsultationsForUser: dbCount,
+        nodeVersion: process.version,
+        cwd: process.cwd(),
+      };
+    }),
   }),
 });
 
