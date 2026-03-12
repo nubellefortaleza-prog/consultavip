@@ -213,57 +213,46 @@ export const appRouter = router({
     generateReport: protectedProcedure
       .input(z.object({ consultationId: z.number(), transcription: z.string() }))
       .mutation(async ({ input }) => {
+        const geminiApiKey = process.env.GEMINI_API_KEY;
+        if (!geminiApiKey) {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "GEMINI_API_KEY não configurada no servidor. Adicione no arquivo .env." });
+        }
+
         const now = new Date();
         const dateStr = now.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "America/Fortaleza" });
         const timeStr = now.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", timeZone: "America/Fortaleza" });
 
-        const systemPrompt = `Você é um assistente especializado em clínicas de estética. Analise a transcrição de uma consulta médica estética e preencha o relatório estruturado.
+        const prompt = `Você é um assistente especializado em clínicas de estética. Analise a transcrição abaixo e retorne APENAS um JSON válido, sem markdown, sem explicações.
 
 REGRAS:
 - Extraia as informações diretamente da transcrição.
 - Se alguma informação NÃO for mencionada, preencha com "Não mencionado".
 - Mantenha o texto profissional e objetivo.
 - Use a data e horário atuais: ${dateStr} às ${timeStr}.
-- Responda APENAS com o JSON.
 
-Retorne um JSON com estes campos:
-{"patientName","consultationDate","patientProfile","mainComplaints","treatmentPlan","budgetPresented","closedDeal","additionalNotes"}`;
+JSON esperado (retorne SOMENTE isso):
+{"patientName":"...","consultationDate":"...","patientProfile":"...","mainComplaints":"...","treatmentPlan":"...","budgetPresented":"...","closedDeal":"...","additionalNotes":"..."}
 
-        const result = await invokeLLM({
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: `Transcrição da consulta:\n\n${input.transcription}` },
-          ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "consultation_report",
-              strict: true,
-              schema: {
-                type: "object",
-                properties: {
-                  patientName: { type: "string" },
-                  consultationDate: { type: "string" },
-                  patientProfile: { type: "string" },
-                  mainComplaints: { type: "string" },
-                  treatmentPlan: { type: "string" },
-                  budgetPresented: { type: "string" },
-                  closedDeal: { type: "string" },
-                  additionalNotes: { type: "string" },
-                },
-                required: ["patientName", "consultationDate", "patientProfile", "mainComplaints", "treatmentPlan", "budgetPresented", "closedDeal", "additionalNotes"],
-                additionalProperties: false,
-              },
-            },
-          },
+Transcrição da consulta:
+${input.transcription}`;
+
+        const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
         });
 
-        const content = result.choices[0]?.message?.content;
-        if (!content || typeof content !== "string") {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao gerar relatório com IA." });
+        const rawText = response.text?.trim() || "";
+        // Remove markdown code fences if Gemini wraps the JSON
+        const jsonText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+        let report: any;
+        try {
+          report = JSON.parse(jsonText);
+        } catch {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao interpretar resposta da IA. Tente novamente." });
         }
 
-        const report = JSON.parse(content);
         await updateConsultation(input.consultationId, {
           patientName: report.patientName,
           consultationDate: report.consultationDate,
