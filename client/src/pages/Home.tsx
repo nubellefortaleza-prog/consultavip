@@ -525,21 +525,9 @@ function downloadReport(c: any) {
   URL.revokeObjectURL(url);
 }
 
-function HistoryView({ consultations, loading, onBack, onRefresh }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh: () => void }) {
-  const driveStatus = trpc.consultation.driveStatus.useQuery(undefined, { retry: false });
-  const backupMutation = trpc.consultation.backupToDrive.useMutation({
-    onSuccess: () => { toast.success("Áudio enviado para o Google Drive e removido do servidor!"); onRefresh(); },
-    onError: (e) => toast.error(e.message),
-  });
-  const [backingUpId, setBackingUpId] = useState<number | null>(null);
-
-  const handleBackup = async (consultationId: number) => {
-    setBackingUpId(consultationId);
-    try { await backupMutation.mutateAsync({ consultationId }); }
-    finally { setBackingUpId(null); }
-  };
-
-  const isDriveOn = driveStatus.data?.configured === true;
+function HistoryView({ consultations, loading, onBack }: { consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void }) {
+  // Google Drive: desativado temporariamente
+  const isDriveOn = false;
 
   return (
     <div className="max-w-2xl mx-auto">
