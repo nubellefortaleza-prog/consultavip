@@ -14,6 +14,8 @@ import { ENV } from "./_core/env";
 import { sendEmail } from "./email";
 import { sdk } from "./_core/sdk";
 import { verifyPassword } from "./_core/auth-utils";
+import fs from "fs/promises";
+import path from "path";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
@@ -69,17 +71,39 @@ export const appRouter = router({
     transcribe: protectedProcedure
       .input(z.object({ consultationId: z.number(), audioUrl: z.string() }))
       .mutation(async ({ input }) => {
-        // Attempt 1: Gemini direct API with inline audio data (primary for VPS hosting)
+        // Attempt 1: Gemini direct API — reads file from disk (more reliable than HTTP fetch)
         const geminiApiKey = process.env.GEMINI_API_KEY;
         if (geminiApiKey) {
           try {
             console.log("[Transcription] Trying Gemini direct API...");
-            const audioResp = await fetch(input.audioUrl);
-            if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
-            const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
-            const base64Audio = audioBuffer.toString("base64");
-            const mimeType = input.audioUrl.endsWith(".mp4") || input.audioUrl.endsWith(".m4a") ? "audio/mp4" : "audio/webm";
 
+            // Try reading from disk first (faster, no HTTP roundtrip)
+            let audioBuffer: Buffer | null = null;
+            let mimeType = "audio/webm";
+            const consultation = await getConsultationById(input.consultationId);
+            if (consultation?.audioKey) {
+              const uploadsDir = process.env.UPLOADS_DIR
+                ? path.resolve(process.env.UPLOADS_DIR)
+                : path.resolve(process.cwd(), "uploads");
+              const filePath = path.join(uploadsDir, consultation.audioKey);
+              try {
+                audioBuffer = await fs.readFile(filePath);
+                if (consultation.audioKey.endsWith(".mp4") || consultation.audioKey.endsWith(".m4a")) mimeType = "audio/mp4";
+                console.log("[Transcription] Audio read from disk:", filePath, `(${(audioBuffer.length / 1024).toFixed(0)}KB)`);
+              } catch (fsErr: any) {
+                console.warn("[Transcription] Could not read from disk, will fetch URL:", fsErr.message);
+              }
+            }
+
+            // Fallback: fetch from URL
+            if (!audioBuffer) {
+              const audioResp = await fetch(input.audioUrl);
+              if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
+              audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+              if (input.audioUrl.endsWith(".mp4") || input.audioUrl.endsWith(".m4a")) mimeType = "audio/mp4";
+            }
+
+            const base64Audio = audioBuffer.toString("base64");
             const ai = new GoogleGenAI({ apiKey: geminiApiKey });
             const response = await ai.models.generateContent({
               model: "gemini-2.5-flash",
