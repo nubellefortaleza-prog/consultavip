@@ -2,11 +2,18 @@ import nodemailer from "nodemailer";
 
 const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
 
+export interface EmailAttachment {
+  filename: string;
+  content: string | Buffer;
+  contentType?: string;
+}
+
 export interface EmailPayload {
   to?: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: EmailAttachment[];
 }
 
 /**
@@ -41,6 +48,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ success: boole
       subject: payload.subject,
       text: payload.text,
       html: payload.html,
+      attachments: payload.attachments,
     });
 
     console.log("[Email] Sent successfully:", info.messageId);

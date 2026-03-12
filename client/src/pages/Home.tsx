@@ -4,20 +4,20 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { getLoginUrl } from "@/const";
 import { toast } from "sonner";
 import {
-  Mic, Square, Pause, Play, Upload, FileText, Send,
-  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History, Download, CloudUpload,
+  Mic, Square, Pause, Play, Loader2, CheckCircle2, RotateCcw, Clock, LogOut,
+  History, FileText, CloudUpload, BarChart2, Users, Settings, Shield,
+  Bell, Database, X, NotebookPen, ChevronRight, Zap,
 } from "lucide-react";
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 const LOGO_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310419663032644247/XjbcOchGTMROPEqF.png";
 
-type AppStep = "info" | "record" | "uploading" | "transcribing" | "report" | "sending" | "done";
+type AppStep = "info" | "record" | "notes";
 
 type ReportData = {
   patientName: string;
@@ -46,23 +46,17 @@ const FIELD_ORDER: (keyof ReportData)[] = [
   "treatmentPlan", "budgetPresented", "closedDeal", "additionalNotes",
 ];
 
-const SINGLE_LINE_FIELDS: (keyof ReportData)[] = ["patientName", "consultationDate"];
-
 export default function Home() {
   const { user, loading: authLoading, isAuthenticated, logout } = useAuth();
   const recorder = useAudioRecorder();
   const [step, setStep] = useState<AppStep>("info");
   const [patientName, setPatientName] = useState("");
   const [patientPhone, setPatientPhone] = useState("");
-  const [consultationId, setConsultationId] = useState<number | null>(null);
-  const [transcription, setTranscription] = useState("");
-  const [report, setReport] = useState<ReportData>({
-    patientName: "", consultationDate: "", patientProfile: "",
-    mainComplaints: "", treatmentPlan: "", budgetPresented: "",
-    closedDeal: "", additionalNotes: "",
-  });
+  const [notes, setNotes] = useState("");
   const [showHistory, setShowHistory] = useState(false);
-  const processingRef = useRef(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const bgProcessingRef = useRef(false);
+  const waitingForBlobRef = useRef(false);
 
   const uploadMutation = trpc.consultation.uploadAudio.useMutation();
   const transcribeMutation = trpc.consultation.transcribe.useMutation();
@@ -76,93 +70,98 @@ export default function Home() {
     try { await recorder.startRecording(); } catch (err: any) { toast.error(err.message || "Erro ao iniciar gravação"); }
   }, [recorder]);
 
-  const processAudio = useCallback(async (blob: Blob) => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      setStep("uploading");
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => { const r = reader.result as string; resolve(r.split(",")[1] || r); };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      const uploadResult = await uploadMutation.mutateAsync({ audioBase64: base64, mimeType: blob.type || "audio/webm", patientName, patientPhone });
-      setConsultationId(uploadResult.consultationId);
-
-      setStep("transcribing");
-      const transcribeResult = await transcribeMutation.mutateAsync({ consultationId: uploadResult.consultationId, audioUrl: uploadResult.audioUrl });
-      setTranscription(transcribeResult.text);
-
-      const reportResult = await generateReportMutation.mutateAsync({ consultationId: uploadResult.consultationId, transcription: transcribeResult.text });
-      setReport({ ...reportResult, patientName: reportResult.patientName || patientName });
-      setStep("report");
-      toast.success("Relatório gerado com sucesso!");
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao processar áudio");
-      setStep("record");
-    } finally {
-      processingRef.current = false;
-    }
-  }, [uploadMutation, transcribeMutation, generateReportMutation, patientName, patientPhone]);
-
-  // waitingForBlob: flag that signals we stopped recording and are waiting for the blob
-  const waitingForBlobRef = useRef(false);
-  const processAudioRef = useRef(processAudio);
-  useEffect(() => { processAudioRef.current = processAudio; }, [processAudio]);
-
-  // Automatically trigger processing when blob becomes available after stop
-  useEffect(() => {
-    if (waitingForBlobRef.current && recorder.audioBlob && recorder.state === "stopped" && step === "record") {
-      waitingForBlobRef.current = false;
-      processAudioRef.current(recorder.audioBlob);
-    }
-  }, [recorder.audioBlob, recorder.state, step]);
-
-  const handleStopAndProcess = useCallback(() => {
+  const handleStopRecording = useCallback(() => {
     waitingForBlobRef.current = true;
     recorder.stopRecording();
   }, [recorder]);
 
-  const handleProcessStopped = useCallback(() => {
+  // When blob is ready after stop → go to notes step
+  useEffect(() => {
+    if (waitingForBlobRef.current && recorder.audioBlob && recorder.state === "stopped" && step === "record") {
+      waitingForBlobRef.current = false;
+      setStep("notes");
+    }
+  }, [recorder.audioBlob, recorder.state, step]);
+
+  const handleFinishAndSend = useCallback(() => {
     const blob = recorder.audioBlob;
-    if (blob) processAudio(blob);
-    else toast.error("Nenhum áudio encontrado.");
-  }, [recorder.audioBlob, processAudio]);
+    if (!blob) { toast.error("Nenhum áudio encontrado."); return; }
 
-  const handleSendEmail = useCallback(async () => {
-    if (!consultationId) return;
-    try {
-      setStep("sending");
-      await sendEmailMutation.mutateAsync({ consultationId, ...report });
-      setStep("done");
-      toast.success("E-mail enviado com sucesso!");
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao enviar e-mail");
-      setStep("report");
-    }
-  }, [consultationId, report, sendEmailMutation]);
+    const capturedNotes = notes;
+    const capturedName = patientName;
+    const capturedPhone = patientPhone;
 
-  const handleNewConsultation = useCallback(() => {
-    setStep("info"); setConsultationId(null); setTranscription("");
-    setPatientName(""); setPatientPhone("");
-    setReport({ patientName: "", consultationDate: "", patientProfile: "", mainComplaints: "", treatmentPlan: "", budgetPresented: "", closedDeal: "", additionalNotes: "" });
-    recorder.reset(); processingRef.current = false;
+    // Reset UI immediately → doctor goes back to initial screen
+    setStep("info");
+    setPatientName("");
+    setPatientPhone("");
+    setNotes("");
+    recorder.reset();
+
+    if (bgProcessingRef.current) return;
+    bgProcessingRef.current = true;
+
+    (async () => {
+      const toastId = toast.loading("Enviando áudio...");
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => { const r = reader.result as string; resolve(r.split(",")[1] || r); };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        const uploadResult = await uploadMutation.mutateAsync({
+          audioBase64: base64,
+          mimeType: blob.type || "audio/webm",
+          patientName: capturedName,
+          patientPhone: capturedPhone,
+        });
+
+        toast.loading("Transcrevendo consulta com IA...", { id: toastId });
+        const transcribeResult = await transcribeMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          audioUrl: uploadResult.audioUrl,
+        });
+
+        toast.loading("Gerando relatório com IA...", { id: toastId });
+        const reportResult = await generateReportMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          transcription: transcribeResult.text,
+        });
+
+        toast.loading("Enviando por e-mail...", { id: toastId });
+        await sendEmailMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          patientName: reportResult.patientName || capturedName,
+          consultationDate: reportResult.consultationDate || "",
+          patientProfile: reportResult.patientProfile || "",
+          mainComplaints: reportResult.mainComplaints || "",
+          treatmentPlan: reportResult.treatmentPlan || "",
+          budgetPresented: reportResult.budgetPresented || "",
+          closedDeal: reportResult.closedDeal || "",
+          additionalNotes: capturedNotes
+            ? (reportResult.additionalNotes && reportResult.additionalNotes !== "Não mencionado"
+                ? `${reportResult.additionalNotes}\n\nAnotações do Dr.: ${capturedNotes}`
+                : capturedNotes)
+            : (reportResult.additionalNotes || ""),
+        });
+
+        toast.success(`Relatório de ${capturedName} enviado por e-mail!`, { id: toastId });
+      } catch (err: any) {
+        toast.error(err.message || "Erro ao processar consulta", { id: toastId });
+      } finally {
+        bgProcessingRef.current = false;
+      }
+    })();
+  }, [recorder, notes, patientName, patientPhone, uploadMutation, transcribeMutation, generateReportMutation, sendEmailMutation]);
+
+  const handleCancelNotes = useCallback(() => {
+    setNotes("");
+    setStep("record");
+    recorder.reset();
+    setStep("info");
   }, [recorder]);
-
-  const updateReportField = useCallback((field: keyof ReportData, value: string) => {
-    setReport((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  const isProcessing = step === "uploading" || step === "transcribing" || step === "sending";
-  const stepMessage = useMemo(() => {
-    switch (step) {
-      case "uploading": return "Enviando áudio...";
-      case "transcribing": return "Transcrevendo consulta com IA...";
-      case "sending": return "Enviando relatório por e-mail...";
-      default: return "";
-    }
-  }, [step]);
 
   if (authLoading) {
     return (
@@ -193,11 +192,23 @@ export default function Home() {
     );
   }
 
+  const isAdmin = user?.role === "admin";
+
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-vip-pearl)]">
-      <AppHeader user={user} onLogout={logout} onToggleHistory={() => setShowHistory(!showHistory)} showHistory={showHistory} />
+      <AppHeader
+        user={user}
+        onLogout={logout}
+        onToggleHistory={() => { setShowHistory(!showHistory); setShowAdmin(false); }}
+        showHistory={showHistory}
+        isAdmin={isAdmin}
+        onToggleAdmin={() => { setShowAdmin(!showAdmin); setShowHistory(false); }}
+        showAdmin={showAdmin}
+      />
       <main className="flex-1 container py-6 md:py-10">
-        {showHistory ? (
+        {showAdmin && isAdmin ? (
+          <AdminView onBack={() => setShowAdmin(false)} />
+        ) : showHistory ? (
           <HistoryView
             consultations={historyQuery.data || []}
             loading={historyQuery.isLoading}
@@ -224,100 +235,22 @@ export default function Home() {
 
             {step === "record" && (
               <RecordingCard
-                recorderState={recorder.state} formattedDuration={recorder.formattedDuration}
-                onStart={handleStartRecording} onStop={handleStopAndProcess}
-                onPause={recorder.pauseRecording} onResume={recorder.resumeRecording}
-                hasBlob={!!recorder.audioBlob} onProcess={handleProcessStopped}
+                recorderState={recorder.state}
+                formattedDuration={recorder.formattedDuration}
+                onStart={handleStartRecording}
+                onStop={handleStopRecording}
+                onPause={recorder.pauseRecording}
+                onResume={recorder.resumeRecording}
               />
             )}
 
-            {isProcessing && (
-              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                <CardContent className="p-8 md:p-12 text-center">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[var(--color-vip-silk)]/50 flex items-center justify-center">
-                    <Loader2 className="w-10 h-10 animate-spin text-[var(--color-vip-blush)]" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-[var(--color-vip-noir)] mb-2">{stepMessage}</h3>
-                  <p className="text-sm text-[var(--color-vip-noir)]/50 font-sans">Aguarde enquanto processamos sua consulta</p>
-                  {step === "transcribing" && (
-                    <div className="mt-6 flex justify-center gap-1">
-                      {[0,1,2,3,4].map(i => <div key={i} className="w-1.5 rounded-full bg-[var(--color-vip-blush)] audio-wave-bar" style={{animationDelay:`${i*0.15}s`,height:"8px"}} />)}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
-
-            {step === "report" && (
-              <div className="space-y-6">
-                <Card className="border-0 shadow-md bg-white/80 backdrop-blur-sm">
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="w-4 h-4 text-[var(--color-vip-terracotta)]" />
-                      <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Transcrição</h3>
-                    </div>
-                    <div className="bg-[var(--color-vip-pearl)] rounded-lg p-4 max-h-40 overflow-y-auto">
-                      <p className="text-sm text-[var(--color-vip-noir)]/70 font-sans leading-relaxed whitespace-pre-wrap">{transcription || "Nenhuma transcrição disponível"}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                  <CardContent className="p-6 md:p-8">
-                    <div className="flex items-center gap-2 mb-6">
-                      <FileText className="w-5 h-5 text-[var(--color-vip-blush)]" />
-                      <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Relatório da Consulta</h3>
-                    </div>
-                    <p className="text-sm text-[var(--color-vip-noir)]/50 mb-6 font-sans">Revise e edite os campos abaixo antes de enviar por e-mail.</p>
-                    <div className="space-y-5">
-                      {FIELD_ORDER.map(field => (
-                        <div key={field}>
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">{REPORT_LABELS[field]}</Label>
-                          {SINGLE_LINE_FIELDS.includes(field) ? (
-                            <Input value={report[field]} onChange={e => updateReportField(field, e.target.value)} className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
-                          ) : (
-                            <Textarea value={report[field]} onChange={e => updateReportField(field, e.target.value)} rows={3} className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans resize-y" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <Separator className="my-6 bg-[var(--color-vip-silk)]" />
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <Button onClick={handleSendEmail} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
-                        <Send className="w-4 h-4 mr-2" />Enviar por E-mail
-                      </Button>
-                      <Button onClick={handleNewConsultation} variant="outline" className="border-[var(--color-vip-sage)] text-[var(--color-vip-noir)] hover:bg-[var(--color-vip-sage)]/10 font-sans" size="lg">
-                        <RotateCcw className="w-4 h-4 mr-2" />Nova Consulta
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {step === "done" && (
-              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                <CardContent className="p-8 md:p-12 text-center">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[var(--color-vip-sage)]/20 flex items-center justify-center">
-                    <CheckCircle2 className="w-10 h-10 text-[var(--color-vip-sage)]" />
-                  </div>
-                  <h3 className="text-2xl font-semibold text-[var(--color-vip-noir)] mb-2">Relatório Enviado!</h3>
-                  <p className="text-sm text-[var(--color-vip-noir)]/50 mb-2 font-sans">O relatório de <strong>{report.patientName}</strong> foi enviado com sucesso para:</p>
-                  <p className="text-sm font-medium text-[var(--color-vip-blush)] mb-8 font-sans">nubellefortaleza@gmail.com</p>
-                  <div className="text-left bg-[var(--color-vip-pearl)] rounded-lg p-5 mb-8">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-3 font-sans">Resumo do Relatório</h4>
-                    {FIELD_ORDER.map(field => (
-                      <div key={field} className="flex gap-2 py-1.5 border-b border-[var(--color-vip-silk)]/50 last:border-0">
-                        <span className="text-xs font-semibold text-[var(--color-vip-noir)]/60 uppercase min-w-[140px] font-sans">{REPORT_LABELS[field]}:</span>
-                        <span className="text-xs text-[var(--color-vip-noir)] font-sans">{report[field]}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <Button onClick={handleNewConsultation} className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
-                    <RotateCcw className="w-4 h-4 mr-2" />Nova Consulta
-                  </Button>
-                </CardContent>
-              </Card>
+            {step === "notes" && (
+              <NotesCard
+                notes={notes}
+                onNotesChange={setNotes}
+                onFinish={handleFinishAndSend}
+                onCancel={handleCancelNotes}
+              />
             )}
           </div>
         )}
@@ -327,7 +260,12 @@ export default function Home() {
   );
 }
 
-function AppHeader({ user, onLogout, onToggleHistory, showHistory }: { user?: any; onLogout?: () => void; onToggleHistory?: () => void; showHistory?: boolean }) {
+function AppHeader({
+  user, onLogout, onToggleHistory, showHistory, isAdmin, onToggleAdmin, showAdmin,
+}: {
+  user?: any; onLogout?: () => void; onToggleHistory?: () => void; showHistory?: boolean;
+  isAdmin?: boolean; onToggleAdmin?: () => void; showAdmin?: boolean;
+}) {
   return (
     <header className="bg-white/70 backdrop-blur-md border-b border-[var(--color-vip-silk)]/50 sticky top-0 z-50">
       <div className="container flex items-center justify-between h-16 md:h-20">
@@ -338,6 +276,11 @@ function AppHeader({ user, onLogout, onToggleHistory, showHistory }: { user?: an
         </div>
         {user && (
           <div className="flex items-center gap-2">
+            {isAdmin && onToggleAdmin && (
+              <Button variant="ghost" size="sm" onClick={onToggleAdmin} className={`text-xs font-sans ${showAdmin ? "text-[var(--color-vip-blush)]" : "text-[var(--color-vip-noir)]/60"}`}>
+                <Shield className="w-4 h-4 mr-1" /><span className="hidden sm:inline">Admin</span>
+              </Button>
+            )}
             {onToggleHistory && (
               <Button variant="ghost" size="sm" onClick={onToggleHistory} className={`text-xs font-sans ${showHistory ? "text-[var(--color-vip-blush)]" : "text-[var(--color-vip-noir)]/60"}`}>
                 <History className="w-4 h-4 mr-1" /><span className="hidden sm:inline">Histórico</span>
@@ -363,9 +306,12 @@ function AppFooter() {
 }
 
 function StepIndicator({ currentStep }: { currentStep: AppStep }) {
-  const steps = [{ key: "info", label: "Paciente" }, { key: "record", label: "Gravar" }, { key: "process", label: "Processar" }, { key: "report", label: "Relatório" }, { key: "done", label: "Enviado" }];
-  const getIdx = () => { if (currentStep === "info") return 0; if (currentStep === "record") return 1; if (["uploading","transcribing"].includes(currentStep)) return 2; if (currentStep === "report" || currentStep === "sending") return 3; return 4; };
-  const activeIndex = getIdx();
+  const steps = [
+    { key: "info", label: "Paciente" },
+    { key: "record", label: "Gravar" },
+    { key: "notes", label: "Anotações" },
+  ];
+  const activeIndex = steps.findIndex(s => s.key === currentStep);
   return (
     <div className="flex items-center justify-center gap-2 mb-8">
       {steps.map((s, i) => (
@@ -402,32 +348,14 @@ function PatientInfoCard({ patientName, patientPhone, onPatientNameChange, onPat
         <form onSubmit={handleSubmit} className="space-y-5">
           <div>
             <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Nome da Paciente</Label>
-            <Input
-              value={patientName}
-              onChange={e => onPatientNameChange(e.target.value)}
-              placeholder="Ex: Maria Silva"
-              required
-              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
-            />
+            <Input value={patientName} onChange={e => onPatientNameChange(e.target.value)} placeholder="Ex: Maria Silva" required className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
           </div>
           <div>
             <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Telefone / WhatsApp</Label>
-            <Input
-              value={patientPhone}
-              onChange={e => onPatientPhoneChange(e.target.value)}
-              placeholder="Ex: 85999990000"
-              required
-              type="tel"
-              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
-            />
+            <Input value={patientPhone} onChange={e => onPatientPhoneChange(e.target.value)} placeholder="Ex: 85999990000" required type="tel" className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
             <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">O telefone será usado como identificador da paciente</p>
           </div>
-          <Button
-            type="submit"
-            disabled={!patientName.trim() || !patientPhone.trim()}
-            className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
-            size="lg"
-          >
+          <Button type="submit" disabled={!patientName.trim() || !patientPhone.trim()} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
             <Mic className="w-4 h-4 mr-2" />Iniciar Gravação
           </Button>
         </form>
@@ -436,9 +364,9 @@ function PatientInfoCard({ patientName, patientPhone, onPatientNameChange, onPat
   );
 }
 
-function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPause, onResume, hasBlob, onProcess }: {
+function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPause, onResume }: {
   recorderState: string; formattedDuration: string; onStart: () => void; onStop: () => void;
-  onPause: () => void; onResume: () => void; hasBlob: boolean; onProcess: () => void;
+  onPause: () => void; onResume: () => void;
 }) {
   const isRecording = recorderState === "recording";
   const isPaused = recorderState === "paused";
@@ -459,7 +387,7 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
               : "bg-[var(--color-vip-noir)] hover:bg-[var(--color-vip-noir)]/90"
             }`}
           >
-            {isRecording ? <Square className="w-8 h-8 md:w-10 md:h-10 text-white" /> : <Mic className="w-8 h-8 md:w-10 md:h-10 text-white" />}
+            {isRecording ? <Square className="w-8 h-8 md:w-10 md:h-10 text-white" /> : isStopped ? <Loader2 className="w-8 h-8 md:w-10 md:h-10 text-white animate-spin" /> : <Mic className="w-8 h-8 md:w-10 md:h-10 text-white" />}
           </button>
         </div>
 
@@ -478,27 +406,33 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
         )}
 
         <h3 className="text-xl md:text-2xl font-semibold text-[var(--color-vip-noir)] mb-2">
-          {isIdle && "Iniciar Gravação"}{isRecording && "Gravando Consulta..."}{isPaused && "Gravação Pausada"}{isStopped && "Gravação Finalizada"}
+          {isIdle && "Iniciar Gravação"}
+          {isRecording && "Gravando Consulta..."}
+          {isPaused && "Gravação Pausada"}
+          {isStopped && "Preparando..."}
         </h3>
         <p className="text-sm text-[var(--color-vip-noir)]/50 mb-6 font-sans">
           {isIdle && "Toque no microfone para começar a gravar a consulta"}
           {isRecording && "Toque no botão para parar a gravação"}
           {isPaused && "Toque para retomar ou finalize a gravação"}
-          {isStopped && "Áudio pronto para processamento"}
+          {isStopped && "Aguarde, finalizando a gravação..."}
         </p>
 
         <div className="flex justify-center gap-3">
           {isRecording && (
-            <Button onClick={onPause} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)] font-sans"><Pause className="w-4 h-4 mr-2" />Pausar</Button>
+            <Button onClick={onPause} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)] font-sans">
+              <Pause className="w-4 h-4 mr-2" />Pausar
+            </Button>
           )}
           {isPaused && (
             <>
-              <Button onClick={onResume} className="bg-[var(--color-vip-terracotta)] hover:bg-[var(--color-vip-terracotta)]/90 text-white font-sans"><Play className="w-4 h-4 mr-2" />Retomar</Button>
-              <Button onClick={onStop} variant="outline" className="border-[var(--color-vip-blush)] text-[var(--color-vip-blush)] font-sans"><Square className="w-4 h-4 mr-2" />Finalizar</Button>
+              <Button onClick={onResume} className="bg-[var(--color-vip-terracotta)] hover:bg-[var(--color-vip-terracotta)]/90 text-white font-sans">
+                <Play className="w-4 h-4 mr-2" />Retomar
+              </Button>
+              <Button onClick={onStop} variant="outline" className="border-[var(--color-vip-blush)] text-[var(--color-vip-blush)] font-sans">
+                <Square className="w-4 h-4 mr-2" />Finalizar
+              </Button>
             </>
-          )}
-          {isStopped && hasBlob && (
-            <Button onClick={onProcess} className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg"><Upload className="w-4 h-4 mr-2" />Processar Consulta</Button>
           )}
         </div>
       </CardContent>
@@ -506,44 +440,150 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
   );
 }
 
-function downloadReport(c: any) {
-  const lines = [
-    "RELATÓRIO DE CONSULTA - VIP ESTETIC",
-    "═".repeat(50),
-    "",
-    `PACIENTE: ${c.patientName || "Não informado"}`,
-    `TELEFONE: ${c.patientPhone || "Não informado"}`,
-    `DATA E HORÁRIO: ${c.consultationDate || "Não informado"}`,
-    `PERFIL: ${c.patientProfile || "Não mencionado"}`,
-    `QUEIXAS PRINCIPAIS: ${c.mainComplaints || "Não mencionado"}`,
-    `PLANO DE TRATAMENTO: ${c.treatmentPlan || "Não mencionado"}`,
-    `ORÇAMENTO APRESENTADO: ${c.budgetPresented || "Não mencionado"}`,
-    `O QUE FOI FECHADO: ${c.closedDeal || "Não mencionado"}`,
-    `OBSERVAÇÕES: ${c.additionalNotes || "Não mencionado"}`,
-    "",
-    "═".repeat(50),
-    "Gerado pelo ConsultaVip - Vip Estetic",
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = (c.patientName || "paciente").replace(/\s+/g, "_");
-  const safePhone = (c.patientPhone || "sem_tel").replace(/\D/g, "");
-  const date = c.consultationDate?.split(" ")[0]?.replace(/\//g, "") || new Date(c.createdAt).toLocaleDateString("pt-BR").replace(/\//g, "");
-  a.href = url;
-  a.download = `Relatorio_${safeName}_${safePhone}_${date}.txt`;
-  a.click();
-  URL.revokeObjectURL(url);
+function NotesCard({ notes, onNotesChange, onFinish, onCancel }: {
+  notes: string; onNotesChange: (v: string) => void; onFinish: () => void; onCancel: () => void;
+}) {
+  return (
+    <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
+      <CardContent className="p-8 md:p-10">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-silk)] flex items-center justify-center">
+            <NotebookPen className="w-5 h-5 text-[var(--color-vip-noir)]" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Anotações do Médico</h3>
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Gravação concluída! Adicione informações extras se desejar.</p>
+          </div>
+        </div>
+
+        <div className="bg-[var(--color-vip-sage)]/10 border border-[var(--color-vip-sage)]/30 rounded-lg px-4 py-3 mb-6 flex items-start gap-2">
+          <CheckCircle2 className="w-4 h-4 text-[var(--color-vip-sage)] mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-[var(--color-vip-noir)]/60 font-sans">
+            Após clicar em <strong>Finalizar e Enviar</strong>, o processamento ocorrerá automaticamente em segundo plano. O relatório será enviado por e-mail quando concluído.
+          </p>
+        </div>
+
+        <div className="mb-6">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+            Observações Adicionais (opcional)
+          </Label>
+          <Textarea
+            value={notes}
+            onChange={e => onNotesChange(e.target.value)}
+            placeholder="Ex: Paciente apresentou interesse em harmonização facial. Agendado retorno para próxima semana..."
+            rows={6}
+            className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans resize-none"
+          />
+          <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Este campo é opcional. A IA irá gerar automaticamente o relatório completo da consulta.</p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button onClick={onFinish} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
+            <Zap className="w-4 h-4 mr-2" />Finalizar e Enviar
+          </Button>
+          <Button onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)]/60 hover:bg-[var(--color-vip-silk)]/20 font-sans" size="lg">
+            <RotateCcw className="w-4 h-4 mr-2" />Cancelar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
+
+// ─── Admin View ────────────────────────────────────────────────────────────────
+
+const ADMIN_STATS = [
+  { label: "Total de Consultas", value: "—", icon: FileText, color: "text-[var(--color-vip-blush)]", bg: "bg-[var(--color-vip-blush)]/10" },
+  { label: "Consultas Hoje", value: "—", icon: Mic, color: "text-[var(--color-vip-terracotta)]", bg: "bg-[var(--color-vip-terracotta)]/10" },
+  { label: "E-mails Enviados", value: "—", icon: Bell, color: "text-[var(--color-vip-sage)]", bg: "bg-[var(--color-vip-sage)]/10" },
+  { label: "Usuários Ativos", value: "—", icon: Users, color: "text-[var(--color-vip-noir)]", bg: "bg-[var(--color-vip-silk)]/50" },
+];
+
+const ADMIN_FEATURES = [
+  { icon: Users, label: "Gestão de Usuários", desc: "Cadastrar, editar e remover usuários do sistema" },
+  { icon: BarChart2, label: "Relatórios Avançados", desc: "Dashboard com métricas e análises de consultas" },
+  { icon: Settings, label: "Configurações do Sistema", desc: "E-mail, IA, integrações e parâmetros gerais" },
+  { icon: Database, label: "Backup Automático", desc: "Exportação periódica para Google Drive" },
+  { icon: FileText, label: "Templates de Relatório", desc: "Personalizar o formato dos relatórios gerados pela IA" },
+  { icon: CloudUpload, label: "Armazenamento em Nuvem", desc: "Gerenciar arquivos de áudio e relatórios" },
+];
+
+function AdminView({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="flex items-center gap-3 mb-6">
+        <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
+        <div className="flex items-center gap-2">
+          <Shield className="w-5 h-5 text-[var(--color-vip-blush)]" />
+          <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Painel Administrativo</h2>
+        </div>
+      </div>
+
+      {/* Coming soon banner */}
+      <Card className="border-0 shadow-md bg-[var(--color-vip-noir)] mb-6">
+        <CardContent className="p-5 flex items-start gap-4">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-blush)]/20 flex items-center justify-center flex-shrink-0">
+            <Zap className="w-5 h-5 text-[var(--color-vip-blush)]" />
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-[var(--color-vip-silk)] mb-1">Funcionalidades em desenvolvimento</h3>
+            <p className="text-xs text-[var(--color-vip-silk)]/50 font-sans leading-relaxed">
+              O painel administrativo está sendo construído. Em breve você terá acesso completo à gestão de usuários, métricas de consultas, configurações avançadas e muito mais.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Stats grid */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+        {ADMIN_STATS.map(({ label, value, icon: Icon, color, bg }) => (
+          <Card key={label} className="border-0 shadow-md bg-white/80">
+            <CardContent className="p-4 text-center">
+              <div className={`w-10 h-10 rounded-full ${bg} flex items-center justify-center mx-auto mb-2`}>
+                <Icon className={`w-5 h-5 ${color}`} />
+              </div>
+              <p className="text-2xl font-bold text-[var(--color-vip-noir)]/30 mb-1">{value}</p>
+              <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">{label}</p>
+              <span className="text-[10px] bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/30 px-2 py-0.5 rounded-full font-sans mt-1 inline-block">em breve</span>
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+
+      {/* Features list */}
+      <Card className="border-0 shadow-md bg-white/80">
+        <CardContent className="p-6">
+          <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider mb-4 font-sans">Funcionalidades Planejadas</h3>
+          <div className="space-y-3">
+            {ADMIN_FEATURES.map(({ icon: Icon, label, desc }) => (
+              <div key={label} className="flex items-center gap-3 py-3 border-b border-[var(--color-vip-silk)]/50 last:border-0">
+                <div className="w-9 h-9 rounded-lg bg-[var(--color-vip-silk)]/40 flex items-center justify-center flex-shrink-0">
+                  <Icon className="w-4 h-4 text-[var(--color-vip-noir)]/40" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-[var(--color-vip-noir)]/70">{label}</p>
+                  <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">{desc}</p>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <span className="text-[10px] bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)] px-2 py-0.5 rounded-full font-sans">em breve</span>
+                  <ChevronRight className="w-4 h-4 text-[var(--color-vip-noir)]/20" />
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── History View ──────────────────────────────────────────────────────────────
 
 function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleServerInfo, serverInfo, serverInfoLoading }: {
   consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void;
   showServerInfo?: boolean; onToggleServerInfo?: () => void; serverInfo?: any; serverInfoLoading?: boolean;
 }) {
-  // Google Drive: desativado temporariamente
-  const isDriveOn = false;
-  const backingUpId: number | null = null;
-  const handleBackup = (_id: number) => {};
+  const [reportConsultation, setReportConsultation] = useState<any | null>(null);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -579,6 +619,7 @@ function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleS
           </CardContent>
         </Card>
       )}
+
       {loading ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)] mx-auto" /></div>
       ) : consultations.length === 0 ? (
@@ -592,47 +633,23 @@ function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleS
                 <CardContent className="p-5">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm truncate">
-                        {c.patientName || "Paciente não identificado"}
-                      </h4>
-                      {c.patientPhone && (
-                        <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">📞 {c.patientPhone}</p>
-                      )}
-                      <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-0.5">
-                        {c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}
-                      </p>
+                      <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm truncate">{c.patientName || "Paciente não identificado"}</h4>
+                      {c.patientPhone && <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">📞 {c.patientPhone}</p>}
+                      <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-0.5">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
                     </div>
                     <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {/* Baixar áudio */}
                       {c.audioUrl && (
-                        <a
-                          href={c.audioUrl}
-                          download
-                          title="Baixar gravação"
-                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors"
-                        >
+                        <a href={c.audioUrl} download title="Baixar gravação" className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors">
                           <Mic className="w-3.5 h-3.5" />
                         </a>
                       )}
-                      {/* Baixar relatório */}
                       {hasReport && (
                         <button
-                          onClick={() => downloadReport(c)}
-                          title="Baixar relatório"
+                          onClick={() => setReportConsultation(c)}
+                          title="Ver relatório"
                           className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors"
                         >
                           <FileText className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                      {/* Backup para Drive */}
-                      {isDriveOn && c.audioKey && !c.audioUrl?.includes("drive.google.com") && (
-                        <button
-                          onClick={() => handleBackup(c.id)}
-                          disabled={backingUpId === c.id}
-                          title="Enviar para Google Drive e liberar espaço"
-                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-sage)] hover:bg-[var(--color-vip-silk)]/30 transition-colors disabled:opacity-50"
-                        >
-                          {backingUpId === c.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudUpload className="w-3.5 h-3.5" />}
                         </button>
                       )}
                       <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
@@ -649,6 +666,61 @@ function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleS
           })}
         </div>
       )}
+
+      {reportConsultation && (
+        <ReportModal consultation={reportConsultation} onClose={() => setReportConsultation(null)} />
+      )}
+    </div>
+  );
+}
+
+// ─── Report Modal ──────────────────────────────────────────────────────────────
+
+function ReportModal({ consultation: c, onClose }: { consultation: any; onClose: () => void }) {
+  const fields: Array<[string, string]> = [
+    ["NOME DO PACIENTE", c.patientName || "Não informado"],
+    ["TELEFONE", c.patientPhone || "Não informado"],
+    ["DATA E HORÁRIO", c.consultationDate || new Date(c.createdAt).toLocaleString("pt-BR")],
+    ["PERFIL DO PACIENTE", c.patientProfile || "Não mencionado"],
+    ["QUEIXAS PRINCIPAIS", c.mainComplaints || "Não mencionado"],
+    ["PLANO DE TRATAMENTO INDICADO", c.treatmentPlan || "Não mencionado"],
+    ["ORÇAMENTO APRESENTADO", c.budgetPresented || "Não mencionado"],
+    ["O QUE FOI FECHADO", c.closedDeal || "Não mencionado"],
+    ["OBSERVAÇÕES ADICIONAIS", c.additionalNotes || "Não mencionado"],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        {/* Header */}
+        <div className="bg-[var(--color-vip-noir)] px-6 py-5 flex items-center justify-between rounded-t-2xl">
+          <div>
+            <h2 className="text-[var(--color-vip-silk)] font-semibold tracking-widest text-sm uppercase">VIP ESTETIC</h2>
+            <p className="text-[var(--color-vip-silk)]/50 text-xs font-sans tracking-wider mt-0.5">Relatório de Consulta</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="bg-white px-6 py-6 space-y-4">
+          {fields.map(([label, value]) => (
+            <div key={label} className="border-b border-[var(--color-vip-silk)]/50 pb-3 last:border-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 font-sans">{label}</p>
+              <p className="text-sm text-[var(--color-vip-noir)] font-sans leading-relaxed whitespace-pre-wrap">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Footer */}
+        <div className="bg-[var(--color-vip-pearl)] px-6 py-4 rounded-b-2xl flex items-center justify-between">
+          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans uppercase tracking-wider">ConsultaVip • Vip Estetic</p>
+          <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
+            {c.emailSent === "yes" ? "E-mail Enviado" : "E-mail Pendente"}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

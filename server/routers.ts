@@ -337,12 +337,20 @@ ${input.transcription}`;
           closedDeal: input.closedDeal, additionalNotes: input.additionalNotes,
         });
 
+        const safeName = input.patientName.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "");
+        const safeDate = (input.consultationDate.split(" ")[0] || "").replace(/\//g, "");
+
         try {
           await sendEmail({
             to: DESTINATION_EMAIL,
             subject,
             text: reportText,
             html: htmlReport,
+            attachments: [{
+              filename: `Relatorio_${safeName}_${safeDate}.txt`,
+              content: reportText,
+              contentType: "text/plain",
+            }],
           });
 
           await updateConsultation(input.consultationId, { emailSent: "yes", emailSentAt: new Date() });
