@@ -1,6 +1,6 @@
 import nodemailer from "nodemailer";
 
-const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
+const DESTINATION_EMAIL = process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
 
 export interface EmailAttachment {
   filename: string;

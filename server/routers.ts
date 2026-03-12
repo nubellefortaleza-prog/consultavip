@@ -18,7 +18,7 @@ import fs from "fs/promises";
 import path from "path";
 import { uploadFileToDrive, isDriveConfigured } from "./googleDrive";
 
-const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
+const DESTINATION_EMAIL = process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
 
 export const appRouter = router({
   system: systemRouter,
