@@ -42,10 +42,12 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         CONSTRAINT \`users_openId_unique\` UNIQUE(\`openId\`)
       )
     `);
-    // Add passwordHash to existing tables (safe to run multiple times)
-    await db.execute(sql`
-      ALTER TABLE \`users\` ADD COLUMN IF NOT EXISTS \`passwordHash\` text
-    `);
+    // Add passwordHash to existing tables (compatible with MySQL 5.7+)
+    try {
+      await db.execute(sql`ALTER TABLE \`users\` ADD COLUMN \`passwordHash\` text`);
+    } catch (e: any) {
+      if (e?.errno !== 1060) throw e; // 1060 = Duplicate column (already exists)
+    }
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`consultations\` (
         \`id\` int AUTO_INCREMENT NOT NULL,
