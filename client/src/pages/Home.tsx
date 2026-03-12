@@ -102,7 +102,7 @@ export default function Home() {
     } finally {
       processingRef.current = false;
     }
-  }, [uploadMutation, transcribeMutation, generateReportMutation]);
+  }, [uploadMutation, transcribeMutation, generateReportMutation, patientName, patientPhone]);
 
   // waitingForBlob: flag that signals we stopped recording and are waiting for the blob
   const waitingForBlobRef = useRef(false);
