@@ -11,8 +11,8 @@ import {
   createConsultation, updateConsultation, getConsultationById, getConsultationsByUser,
   getUserByEmail, getUserByOpenId, getAllUsers, createUser, updateUserProfile, updateUserById, deleteUser,
   getSetting, setSetting, getAllSettings,
+  getAllEstablishments, getEstablishmentById, createEstablishment, updateEstablishment,
 } from "./db";
-import { nanoid } from "nanoid";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./_core/env";
 import { sendEmail } from "./email";
@@ -24,8 +24,17 @@ import { uploadFileToDrive, isDriveConfigured } from "./googleDrive";
 
 const DEFAULT_DESTINATION_EMAIL = process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
 
+/** Returns the user's establishmentId, defaulting to 1 for legacy sessions. */
+const eid = (ctx: { user: any }) => (ctx.user.establishmentId as number | undefined) ?? 1;
+
+/** True if the user is an admin of the platform (establishment 1). */
+const isPlatformAdmin = (ctx: { user: any }) =>
+  ctx.user.role === "admin" && eid(ctx) === 1;
+
 export const appRouter = router({
   system: systemRouter,
+
+  // ─── Auth ──────────────────────────────────────────────────────────────────
   auth: router({
     me: publicProcedure.query(async opts => {
       if (!opts.ctx.user) return null;
@@ -36,6 +45,7 @@ export const appRouter = router({
         name: dbUser.name || opts.ctx.user.name,
         profilePhoto: dbUser.profilePhoto ?? null,
         reportEmail: dbUser.reportEmail ?? null,
+        establishmentId: dbUser.establishmentId ?? 1,
       };
     }),
     logout: publicProcedure.mutation(({ ctx }) => {
@@ -64,11 +74,19 @@ export const appRouter = router({
       }),
   }),
 
-  // ─── Admin Router ───────────────────────────────────────────────────────────
+  // ─── Establishment (public info for current user) ──────────────────────────
+  establishment: router({
+    getCurrent: protectedProcedure.query(async ({ ctx }) => {
+      const establishment = await getEstablishmentById(eid(ctx));
+      return establishment ?? { id: 1, name: "Vip Estetic", logoUrl: null, slug: "vipestetic" };
+    }),
+  }),
+
+  // ─── Admin ─────────────────────────────────────────────────────────────────
   admin: router({
     getSettings: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-      const s = await getAllSettings();
+      const s = await getAllSettings(eid(ctx));
       return {
         smtpUser: s.smtp_user || "",
         smtpPassSet: !!s.smtp_pass,
@@ -86,23 +104,25 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-        if (input.smtpUser !== undefined) await setSetting("smtp_user", input.smtpUser);
-        if (input.smtpPass && input.smtpPass !== "••••••••") await setSetting("smtp_pass", input.smtpPass);
-        if (input.geminiApiKey && input.geminiApiKey !== "••••••••") await setSetting("gemini_api_key", input.geminiApiKey);
-        if (input.destinationEmail !== undefined) await setSetting("destination_email", input.destinationEmail);
+        const e = eid(ctx);
+        if (input.smtpUser !== undefined) await setSetting("smtp_user", input.smtpUser, e);
+        if (input.smtpPass && input.smtpPass !== "••••••••") await setSetting("smtp_pass", input.smtpPass, e);
+        if (input.geminiApiKey && input.geminiApiKey !== "••••••••") await setSetting("gemini_api_key", input.geminiApiKey, e);
+        if (input.destinationEmail !== undefined) await setSetting("destination_email", input.destinationEmail, e);
         return { success: true };
       }),
 
     listUsers: protectedProcedure.query(async ({ ctx }) => {
       if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-      const users = await getAllUsers();
-      return users.map(u => ({
+      const userList = await getAllUsers(eid(ctx));
+      return userList.map(u => ({
         id: u.id,
         name: u.name,
         email: u.email,
         role: u.role,
         reportEmail: u.reportEmail,
         profilePhoto: u.profilePhoto,
+        establishmentId: u.establishmentId,
         createdAt: u.createdAt,
         lastSignedIn: u.lastSignedIn,
       }));
@@ -127,6 +147,7 @@ export const appRouter = router({
           passwordHash,
           role: input.role,
           reportEmail: input.reportEmail || undefined,
+          establishmentId: eid(ctx),
         });
         return { success: true };
       }),
@@ -142,7 +163,6 @@ export const appRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
-        // Check email uniqueness (ignore current user)
         const existing = await getUserByEmail(input.email);
         if (existing && existing.id !== input.userId) {
           throw new TRPCError({ code: "CONFLICT", message: "E-mail já em uso por outro usuário." });
@@ -168,9 +188,72 @@ export const appRouter = router({
         await deleteUser(input.userId);
         return { success: true };
       }),
+
+    // ── Establishments (platform admin only) ──────────────────────────────────
+    listEstablishments: protectedProcedure.query(async ({ ctx }) => {
+      if (!isPlatformAdmin(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+      return getAllEstablishments();
+    }),
+
+    createEstablishment: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        slug: z.string().min(2).regex(/^[a-z0-9-]+$/, "Apenas letras minúsculas, números e hífen").optional().or(z.literal("")),
+        logoUrl: z.string().url().optional().or(z.literal("")),
+        adminName: z.string().min(1),
+        adminEmail: z.string().email(),
+        adminPassword: z.string().min(6),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!isPlatformAdmin(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+
+        const existingUser = await getUserByEmail(input.adminEmail);
+        if (existingUser) throw new TRPCError({ code: "CONFLICT", message: "E-mail do admin já está em uso." });
+
+        // Create establishment
+        const newEid = await createEstablishment({
+          name: input.name.trim(),
+          slug: input.slug?.trim() || undefined,
+          logoUrl: input.logoUrl?.trim() || undefined,
+        });
+
+        // Create admin user for the new establishment
+        const passwordHash = await hashPassword(input.adminPassword);
+        await createUser({
+          email: input.adminEmail.trim(),
+          name: input.adminName.trim(),
+          passwordHash,
+          role: "admin",
+          establishmentId: newEid,
+        });
+
+        return { success: true, establishmentId: newEid };
+      }),
+
+    updateEstablishment: protectedProcedure
+      .input(z.object({
+        establishmentId: z.number(),
+        name: z.string().min(1).optional(),
+        slug: z.string().optional().or(z.literal("")),
+        logoUrl: z.string().optional().or(z.literal("")),
+        active: z.enum(["yes", "no"]).optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (!isPlatformAdmin(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+        if (input.establishmentId === 1 && input.active === "no") {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível desativar o estabelecimento principal." });
+        }
+        await updateEstablishment(input.establishmentId, {
+          name: input.name,
+          slug: input.slug || null,
+          logoUrl: input.logoUrl || null,
+          active: input.active,
+        });
+        return { success: true };
+      }),
   }),
 
-  // ─── User Router ─────────────────────────────────────────────────────────────
+  // ─── User (profile) ────────────────────────────────────────────────────────
   user: router({
     updateProfile: protectedProcedure
       .input(z.object({
@@ -188,7 +271,7 @@ export const appRouter = router({
       }),
   }),
 
-  // ─── Consultation Router ─────────────────────────────────────────────────────
+  // ─── Consultation ──────────────────────────────────────────────────────────
   consultation: router({
     uploadAudio: protectedProcedure
       .input(z.object({
@@ -204,7 +287,6 @@ export const appRouter = router({
           throw new TRPCError({ code: "BAD_REQUEST", message: "O arquivo de áudio excede o limite de 16MB." });
         }
         const ext = input.mimeType.includes("webm") ? "webm" : input.mimeType.includes("mp4") ? "m4a" : "wav";
-
         const sanitize = (s: string) =>
           s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").substring(0, 40);
         const now = new Date();
@@ -217,6 +299,7 @@ export const appRouter = router({
         const { url } = await storagePut(fileKey, buffer, input.mimeType);
         const consultationId = await createConsultation({
           userId: ctx.user.id,
+          establishmentId: eid(ctx),
           audioUrl: url,
           audioKey: fileKey,
           patientName: input.patientName,
@@ -227,13 +310,11 @@ export const appRouter = router({
 
     transcribe: protectedProcedure
       .input(z.object({ consultationId: z.number(), audioUrl: z.string() }))
-      .mutation(async ({ input }) => {
-        // Gemini key: DB setting takes priority over env var
-        const geminiApiKey = (await getSetting("gemini_api_key")) || process.env.GEMINI_API_KEY;
+      .mutation(async ({ input, ctx }) => {
+        const geminiApiKey = (await getSetting("gemini_api_key", eid(ctx))) || process.env.GEMINI_API_KEY;
         if (geminiApiKey) {
           try {
             console.log("[Transcription] Trying Gemini direct API...");
-
             let audioBuffer: Buffer | null = null;
             let mimeType = "audio/webm";
             const consultation = await getConsultationById(input.consultationId);
@@ -250,27 +331,23 @@ export const appRouter = router({
                 console.warn("[Transcription] Could not read from disk, will fetch URL:", fsErr.message);
               }
             }
-
             if (!audioBuffer) {
               const audioResp = await fetch(input.audioUrl);
               if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
               audioBuffer = Buffer.from(await audioResp.arrayBuffer());
               if (input.audioUrl.endsWith(".mp4") || input.audioUrl.endsWith(".m4a")) mimeType = "audio/mp4";
             }
-
             const base64Audio = audioBuffer.toString("base64");
             const ai = new GoogleGenAI({ apiKey: geminiApiKey });
             const response = await ai.models.generateContent({
               model: "gemini-2.5-flash",
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { inlineData: { data: base64Audio, mimeType } },
-                    { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
-                  ],
-                },
-              ],
+              contents: [{
+                role: "user",
+                parts: [
+                  { inlineData: { data: base64Audio, mimeType } },
+                  { text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa, sem comentários adicionais." },
+                ],
+              }],
             });
             const transcription = response.text || "";
             if (!transcription) throw new Error("Gemini não retornou transcrição");
@@ -289,44 +366,26 @@ export const appRouter = router({
             language: "pt",
             prompt: "Transcrição de consulta médica estética em português brasileiro. Termos: botox, preenchimento, harmonização facial, bioestimulador, skinbooster, peeling, laser, ácido hialurônico.",
           });
-
           if (!("error" in whisperResult)) {
             await updateConsultation(input.consultationId, { transcription: whisperResult.text });
             return { text: whisperResult.text, source: "whisper" };
           }
-
           console.log(`[Transcription] Whisper attempt ${attempt + 1} failed:`, whisperResult.error, whisperResult.details || "");
-          if (attempt === 0) {
-            await new Promise(r => setTimeout(r, 2000));
-          }
+          if (attempt === 0) await new Promise(r => setTimeout(r, 2000));
         }
 
         try {
           console.log("[Transcription] Trying invokeLLM with file_url...");
           const llmResult = await invokeLLM({
             messages: [
-              {
-                role: "system",
-                content: "Você é um transcritor profissional. Transcreva o áudio da consulta médica estética em português brasileiro de forma completa e precisa. Retorne APENAS a transcrição, sem comentários, títulos ou formatação adicional.",
-              },
-              {
-                role: "user",
-                content: [
-                  {
-                    type: "file_url" as const,
-                    file_url: { url: input.audioUrl, mime_type: "audio/webm" as const },
-                  },
-                  {
-                    type: "text" as const,
-                    text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa.",
-                  },
-                ],
-              },
+              { role: "system", content: "Você é um transcritor profissional. Transcreva o áudio da consulta médica estética em português brasileiro de forma completa e precisa. Retorne APENAS a transcrição, sem comentários, títulos ou formatação adicional." },
+              { role: "user", content: [
+                { type: "file_url" as const, file_url: { url: input.audioUrl, mime_type: "audio/webm" as const } },
+                { type: "text" as const, text: "Transcreva este áudio de consulta médica estética em português brasileiro. Retorne apenas a transcrição completa." },
+              ]},
             ],
           });
-
-          const transcription = typeof llmResult.choices[0]?.message?.content === "string"
-            ? llmResult.choices[0].message.content : "";
+          const transcription = typeof llmResult.choices[0]?.message?.content === "string" ? llmResult.choices[0].message.content : "";
           if (transcription.trim()) {
             await updateConsultation(input.consultationId, { transcription });
             return { text: transcription, source: "llm" };
@@ -339,16 +398,15 @@ export const appRouter = router({
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: !geminiApiKey
-            ? "Transcrição não configurada. Adicione GEMINI_API_KEY nas configurações do painel admin."
+            ? "Transcrição não configurada. Configure a Gemini API Key no Painel Admin → Configurações."
             : "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
         });
       }),
 
     generateReport: protectedProcedure
       .input(z.object({ consultationId: z.number(), transcription: z.string() }))
-      .mutation(async ({ input }) => {
-        // Gemini key: DB setting takes priority over env var
-        const geminiApiKey = (await getSetting("gemini_api_key")) || process.env.GEMINI_API_KEY;
+      .mutation(async ({ input, ctx }) => {
+        const geminiApiKey = (await getSetting("gemini_api_key", eid(ctx))) || process.env.GEMINI_API_KEY;
         if (!geminiApiKey) {
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "GEMINI_API_KEY não configurada. Configure no Painel Admin → Configurações." });
         }
@@ -381,11 +439,8 @@ ${input.transcription}`;
         const jsonText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
         let report: any;
-        try {
-          report = JSON.parse(jsonText);
-        } catch {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao interpretar resposta da IA. Tente novamente." });
-        }
+        try { report = JSON.parse(jsonText); }
+        catch { throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao interpretar resposta da IA. Tente novamente." }); }
 
         await updateConsultation(input.consultationId, {
           patientName: report.patientName,
@@ -397,7 +452,6 @@ ${input.transcription}`;
           closedDeal: report.closedDeal,
           additionalNotes: report.additionalNotes,
         });
-
         return report;
       }),
 
@@ -432,15 +486,17 @@ ${input.transcription}`;
         additionalNotes: z.string(),
       }))
       .mutation(async ({ input, ctx }) => {
-        // Load dynamic settings from DB
-        const [dbUser, smtpUserSetting, smtpPassSetting, destinationEmailSetting] = await Promise.all([
+        const e = eid(ctx);
+        const [dbUser, smtpUserSetting, smtpPassSetting, destinationEmailSetting, establishment] = await Promise.all([
           getUserByOpenId(ctx.user.openId),
-          getSetting("smtp_user"),
-          getSetting("smtp_pass"),
-          getSetting("destination_email"),
+          getSetting("smtp_user", e),
+          getSetting("smtp_pass", e),
+          getSetting("destination_email", e),
+          getEstablishmentById(e),
         ]);
 
         const doctorName = dbUser?.name || ctx.user.name || "Não informado";
+        const clinicName = establishment?.name || "Vip Estetic";
         const recipientEmail = dbUser?.reportEmail || destinationEmailSetting || DEFAULT_DESTINATION_EMAIL;
         const smtpCredentials = smtpUserSetting && smtpPassSetting
           ? { smtpUser: smtpUserSetting, smtpPass: smtpPassSetting }
@@ -450,7 +506,7 @@ ${input.transcription}`;
         const subject = `${input.patientName} - ${dateForSubject}`;
 
         const reportText = [
-          "RELATÓRIO DE CONSULTA - VIP ESTETIC",
+          `RELATÓRIO DE CONSULTA - ${clinicName.toUpperCase()}`,
           "═".repeat(50),
           "",
           `MÉDICO(A) RESPONSÁVEL: ${doctorName}`,
@@ -464,7 +520,7 @@ ${input.transcription}`;
           `OBSERVAÇÕES ADICIONAIS: ${input.additionalNotes}`,
           "",
           "═".repeat(50),
-          "Relatório gerado automaticamente pelo ConsultaVip - Vip Estetic",
+          `Relatório gerado automaticamente pelo ConsultaVip - ${clinicName}`,
         ].join("\n");
 
         const tableRows = [
@@ -479,7 +535,7 @@ ${input.transcription}`;
           ["Observações Adicionais", input.additionalNotes],
         ];
 
-        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">VIP ESTETIC</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${tableRows.map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
+        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">${clinicName.toUpperCase()}</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${tableRows.map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • ${clinicName.toUpperCase()} • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
 
         await updateConsultation(input.consultationId, {
           patientName: input.patientName, consultationDate: input.consultationDate,
@@ -493,20 +549,10 @@ ${input.transcription}`;
 
         try {
           await sendEmail(
-            {
-              to: recipientEmail,
-              subject,
-              text: reportText,
-              html: htmlReport,
-              attachments: [{
-                filename: `Relatorio_${safeName}_${safeDate}.txt`,
-                content: reportText,
-                contentType: "text/plain",
-              }],
-            },
+            { to: recipientEmail, subject, text: reportText, html: htmlReport,
+              attachments: [{ filename: `Relatorio_${safeName}_${safeDate}.txt`, content: reportText, contentType: "text/plain" }] },
             smtpCredentials,
           );
-
           await updateConsultation(input.consultationId, { emailSent: "yes", emailSentAt: new Date() });
           return { success: true, message: "E-mail enviado com sucesso!" };
         } catch (err: any) {
@@ -531,12 +577,8 @@ ${input.transcription}`;
       .input(z.object({ consultationId: z.number() }))
       .mutation(async ({ input, ctx }) => {
         if (!isDriveConfigured()) {
-          throw new TRPCError({
-            code: "PRECONDITION_FAILED",
-            message: "Google Drive não configurado. Adicione GOOGLE_SERVICE_ACCOUNT_JSON no .env do servidor.",
-          });
+          throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Google Drive não configurado. Adicione GOOGLE_SERVICE_ACCOUNT_JSON no .env do servidor." });
         }
-
         const consultation = await getConsultationById(input.consultationId);
         if (!consultation || consultation.userId !== ctx.user.id) {
           throw new TRPCError({ code: "NOT_FOUND", message: "Consulta não encontrada." });
@@ -544,40 +586,24 @@ ${input.transcription}`;
         if (!consultation.audioKey) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Esta consulta não possui áudio salvo localmente." });
         }
-
-        const uploadsDir = process.env.UPLOADS_DIR
-          ? path.resolve(process.env.UPLOADS_DIR)
-          : path.resolve(process.cwd(), "uploads");
+        const uploadsDir = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.resolve(process.cwd(), "uploads");
         const filePath = path.join(uploadsDir, consultation.audioKey);
-
         let fileBuffer: Buffer;
-        try {
-          fileBuffer = await fs.readFile(filePath);
-        } catch {
-          throw new TRPCError({ code: "NOT_FOUND", message: "Arquivo de áudio não encontrado no servidor. Pode já ter sido removido." });
-        }
-
+        try { fileBuffer = await fs.readFile(filePath); }
+        catch { throw new TRPCError({ code: "NOT_FOUND", message: "Arquivo de áudio não encontrado no servidor. Pode já ter sido removido." }); }
         const filename = path.basename(consultation.audioKey);
         const mimeType = filename.endsWith(".mp4") || filename.endsWith(".m4a") ? "audio/mp4" : "audio/webm";
-
         const { fileId, webViewLink } = await uploadFileToDrive(fileBuffer, filename, mimeType);
-
         await fs.unlink(filePath);
         await updateConsultation(input.consultationId, { audioUrl: webViewLink });
-
         console.log(`[Drive] Backed up and deleted local: ${filePath} → ${webViewLink}`);
         return { success: true, driveUrl: webViewLink, fileId };
       }),
 
-    driveStatus: protectedProcedure.query(() => {
-      return { configured: isDriveConfigured() };
-    }),
+    driveStatus: protectedProcedure.query(() => ({ configured: isDriveConfigured() })),
 
     serverInfo: protectedProcedure.query(async ({ ctx }) => {
-      const uploadsDir = process.env.UPLOADS_DIR
-        ? path.resolve(process.env.UPLOADS_DIR)
-        : path.resolve(process.cwd(), "uploads");
-
+      const uploadsDir = process.env.UPLOADS_DIR ? path.resolve(process.env.UPLOADS_DIR) : path.resolve(process.cwd(), "uploads");
       let fileCount = 0;
       let files: string[] = [];
       try {
@@ -593,22 +619,15 @@ ${input.transcription}`;
         };
         files = await walk(uploadsDir);
         fileCount = files.length;
-      } catch {
-        // directory doesn't exist yet
-      }
+      } catch { /* directory doesn't exist yet */ }
 
       let dbCount = 0;
-      try {
-        const rows = await getConsultationsByUser(ctx.user.id);
-        dbCount = rows.length;
-      } catch { /* db error */ }
+      try { const rows = await getConsultationsByUser(ctx.user.id); dbCount = rows.length; } catch { /* db error */ }
 
-      const geminiFromDb = !!(await getSetting("gemini_api_key"));
-
+      const e = eid(ctx);
+      const geminiFromDb = !!(await getSetting("gemini_api_key", e));
       return {
-        uploadsDir,
-        fileCount,
-        files: files.slice(0, 50),
+        uploadsDir, fileCount, files: files.slice(0, 50),
         appBaseUrl: process.env.APP_BASE_URL || "(não definido)",
         geminiConfigured: geminiFromDb || !!process.env.GEMINI_API_KEY,
         dbConsultationsForUser: dbCount,

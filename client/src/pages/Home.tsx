@@ -12,7 +12,7 @@ import {
   Mic, Square, Pause, Play, Loader2, CheckCircle2, RotateCcw, Clock, LogOut,
   History, FileText, CloudUpload, BarChart2, Users, Settings, Shield,
   Bell, Database, X, NotebookPen, ChevronRight, Zap, Eye, EyeOff, Trash2,
-  UserPlus, Camera, Mail, Pencil,
+  UserPlus, Camera, Mail, Pencil, Building2,
 } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
 
@@ -197,7 +197,7 @@ export default function Home() {
       />
       <main className="flex-1 container py-6 md:py-10">
         {showAdmin && isAdmin ? (
-          <AdminView onBack={() => setShowAdmin(false)} />
+          <AdminView user={user} onBack={() => setShowAdmin(false)} />
         ) : showHistory ? (
           <HistoryView
             consultations={historyQuery.data || []}
@@ -630,10 +630,18 @@ function NotesCard({ notes, onNotesChange, onFinish, onCancel }: {
 
 // ─── Admin View ────────────────────────────────────────────────────────────────
 
-type AdminTab = "settings" | "users";
+type AdminTab = "settings" | "users" | "establishments";
 
-function AdminView({ onBack }: { onBack: () => void }) {
+function AdminView({ user, onBack }: { user: any; onBack: () => void }) {
   const [activeTab, setActiveTab] = useState<AdminTab>("settings");
+  // Platform admin = admin of establishment 1
+  const platformAdmin = user?.role === "admin" && (user?.establishmentId ?? 1) === 1;
+
+  const tabs = [
+    { key: "settings" as AdminTab, label: "Configurações", icon: Settings },
+    { key: "users" as AdminTab, label: "Usuários", icon: Users },
+    ...(platformAdmin ? [{ key: "establishments" as AdminTab, label: "Clínicas", icon: Building2 }] : []),
+  ];
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -647,10 +655,7 @@ function AdminView({ onBack }: { onBack: () => void }) {
 
       {/* Tabs */}
       <div className="flex gap-1 bg-[var(--color-vip-silk)]/30 p-1 rounded-xl mb-6">
-        {([
-          { key: "settings", label: "Configurações", icon: Settings },
-          { key: "users", label: "Usuários", icon: Users },
-        ] as { key: AdminTab; label: string; icon: any }[]).map(({ key, label, icon: Icon }) => (
+        {tabs.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
             onClick={() => setActiveTab(key)}
@@ -667,6 +672,7 @@ function AdminView({ onBack }: { onBack: () => void }) {
 
       {activeTab === "settings" && <AdminSettingsTab />}
       {activeTab === "users" && <AdminUsersTab />}
+      {activeTab === "establishments" && platformAdmin && <EstablishmentsTab />}
     </div>
   );
 }
@@ -1071,6 +1077,235 @@ function CreateUserForm({ onCreated }: { onCreated: () => void }) {
           <Button type="submit" disabled={createMutation.isPending} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
             {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
             Criar Usuário
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Establishments Tab ───────────────────────────────────────────────────────
+
+function EstablishmentsTab() {
+  const estQuery = trpc.admin.listEstablishments.useQuery();
+  const updateMutation = trpc.admin.updateEstablishment.useMutation();
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const handleToggleActive = async (e: any) => {
+    const newActive = e.active === "yes" ? "no" : "yes";
+    if (e.id === 1) return; // cannot deactivate platform
+    try {
+      await updateMutation.mutateAsync({ establishmentId: e.id, active: newActive });
+      estQuery.refetch();
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--color-vip-noir)]/60 font-sans">
+          {estQuery.data?.length ?? 0} clínica(s) cadastrada(s)
+        </p>
+        <Button
+          onClick={() => { setShowCreateForm(v => !v); setEditingId(null); }}
+          className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans text-sm"
+          size="sm"
+        >
+          <Building2 className="w-4 h-4 mr-1.5" />
+          {showCreateForm ? "Cancelar" : "Nova Clínica"}
+        </Button>
+      </div>
+
+      {showCreateForm && (
+        <CreateEstablishmentForm onCreated={() => { setShowCreateForm(false); estQuery.refetch(); }} />
+      )}
+
+      {estQuery.isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>
+      ) : (
+        <div className="space-y-2">
+          {(estQuery.data || []).map(e => (
+            <Card key={e.id} className={`border-0 shadow-sm bg-white/80 ${editingId === e.id ? "ring-2 ring-[var(--color-vip-blush)]/40" : ""}`}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
+                    {e.logoUrl ? (
+                      <img src={e.logoUrl} alt={e.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/40" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{e.name}</p>
+                      {e.id === 1 && <span className="text-[10px] bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)] px-2 py-0.5 rounded-full font-sans">Principal</span>}
+                    </div>
+                    {e.slug && <p className="text-xs text-[var(--color-vip-noir)]/40 font-mono">/{e.slug}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${e.active === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-red-50 text-red-400"}`}>
+                      {e.active === "yes" ? "Ativa" : "Inativa"}
+                    </span>
+                    <button
+                      onClick={() => setEditingId(editingId === e.id ? null : e.id)}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/10 transition-colors"
+                      title="Editar clínica"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    {e.id !== 1 && (
+                      <button
+                        onClick={() => handleToggleActive(e)}
+                        className={`p-1.5 rounded-md transition-colors ${e.active === "yes" ? "text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50" : "text-[var(--color-vip-noir)]/30 hover:text-green-600 hover:bg-green-50"}`}
+                        title={e.active === "yes" ? "Desativar" : "Ativar"}
+                      >
+                        {e.active === "yes" ? <X className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {editingId === e.id && (
+                  <div className="mt-4 pt-4 border-t border-[var(--color-vip-silk)]/50">
+                    <EditEstablishmentForm
+                      establishment={e}
+                      onSaved={() => { setEditingId(null); estQuery.refetch(); }}
+                      onCancel={() => setEditingId(null)}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditEstablishmentForm({ establishment, onSaved, onCancel }: { establishment: any; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(establishment.name || "");
+  const [slug, setSlug] = useState(establishment.slug || "");
+  const [logoUrl, setLogoUrl] = useState(establishment.logoUrl || "");
+  const updateMutation = trpc.admin.updateEstablishment.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateMutation.mutateAsync({
+        establishmentId: establishment.id,
+        name: name.trim(),
+        slug: slug.trim() || "",
+        logoUrl: logoUrl.trim() || "",
+      });
+      toast.success("Clínica atualizada!");
+      onSaved();
+    } catch (err: any) { toast.error(err.message || "Erro ao atualizar"); }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome da Clínica</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+        </div>
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (URL)</Label>
+          <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-x" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">URL do Logo (opcional)</Label>
+        <Input value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://..." className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button type="submit" disabled={updateMutation.isPending} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+          {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Pencil className="w-4 h-4 mr-1.5" />}
+          Salvar
+        </Button>
+        <Button type="button" onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] font-sans" size="sm">Cancelar</Button>
+      </div>
+    </form>
+  );
+}
+
+function CreateEstablishmentForm({ onCreated }: { onCreated: () => void }) {
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const createMutation = trpc.admin.createEstablishment.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const result = await createMutation.mutateAsync({
+        name: name.trim(),
+        slug: slug.trim() || undefined,
+        logoUrl: logoUrl.trim() || undefined,
+        adminName: adminName.trim(),
+        adminEmail: adminEmail.trim(),
+        adminPassword,
+      });
+      toast.success(`Clínica "${name}" criada! Admin: ${adminEmail}`);
+      onCreated();
+    } catch (err: any) { toast.error(err.message || "Erro ao criar clínica"); }
+  };
+
+  return (
+    <Card className="border-0 shadow-md bg-[var(--color-vip-pearl)] border border-[var(--color-vip-silk)]">
+      <CardContent className="p-5">
+        <h4 className="text-sm font-semibold text-[var(--color-vip-noir)] mb-4 font-sans uppercase tracking-wider flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-[var(--color-vip-blush)]" />Nova Clínica
+        </h4>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Dados da Clínica</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Clínica Exemplo" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (opcional)</Label>
+              <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-exemplo" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">URL do Logo (opcional)</Label>
+            <Input value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://..." className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+          </div>
+
+          <div className="pt-1 border-t border-[var(--color-vip-silk)]/50">
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mb-2">Admin da Clínica</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+                <Input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Dr. Nome" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail</Label>
+                <Input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@clinica.com" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Senha do Admin</Label>
+              <div className="relative">
+                <Input type={showPass ? "text" : "password"} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10" />
+                <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <Button type="submit" disabled={createMutation.isPending} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans mt-2" size="sm">
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Building2 className="w-4 h-4 mr-1.5" />}
+            Criar Clínica
           </Button>
         </form>
       </CardContent>
