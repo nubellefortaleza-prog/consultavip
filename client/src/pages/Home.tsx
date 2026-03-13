@@ -208,6 +208,7 @@ export default function Home() {
             onToggleServerInfo={() => setShowServerInfo(v => !v)}
             serverInfo={serverInfoQuery.data}
             serverInfoLoading={serverInfoQuery.isLoading}
+            doctor={user}
           />
         ) : (
           <div className="max-w-2xl mx-auto">
@@ -1408,9 +1409,10 @@ function CreateEstablishmentForm({ onCreated }: { onCreated: () => void }) {
 
 // ─── History View ──────────────────────────────────────────────────────────────
 
-function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleServerInfo, serverInfo, serverInfoLoading }: {
+function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleServerInfo, serverInfo, serverInfoLoading, doctor }: {
   consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void;
   showServerInfo?: boolean; onToggleServerInfo?: () => void; serverInfo?: any; serverInfoLoading?: boolean;
+  doctor?: any;
 }) {
   const [reportConsultation, setReportConsultation] = useState<any | null>(null);
 
@@ -1488,6 +1490,20 @@ function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleS
                   </div>
                   {c.mainComplaints && c.mainComplaints !== "Não mencionado" && (
                     <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>
+                  )}
+                  {doctor && (
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--color-vip-silk)]/40">
+                      <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0 border border-[var(--color-vip-silk)]">
+                        {doctor.profilePhoto ? (
+                          <img src={doctor.profilePhoto} alt={doctor.name || "Dr."} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="w-full h-full flex items-center justify-center bg-[var(--color-vip-silk)] text-[var(--color-vip-noir)] text-[10px] font-semibold">
+                            {(doctor.name || doctor.email || "D").charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[var(--color-vip-noir)]/50 font-sans">{doctor.name || doctor.email}</p>
+                    </div>
                   )}
                 </CardContent>
               </Card>

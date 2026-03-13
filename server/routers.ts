@@ -446,8 +446,13 @@ ${input.transcription}`;
         try { report = JSON.parse(jsonText); }
         catch { throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Falha ao interpretar resposta da IA. Tente novamente." }); }
 
+        const existing = await getConsultationById(input.consultationId);
+        const finalPatientName = (existing?.patientName && existing.patientName !== "Não mencionado")
+          ? existing.patientName
+          : (report.patientName && report.patientName !== "Não mencionado" ? report.patientName : existing?.patientName || "Não informado");
+
         await updateConsultation(input.consultationId, {
-          patientName: report.patientName,
+          patientName: finalPatientName,
           consultationDate: report.consultationDate,
           patientProfile: report.patientProfile,
           mainComplaints: report.mainComplaints,
@@ -456,7 +461,7 @@ ${input.transcription}`;
           closedDeal: report.closedDeal,
           additionalNotes: report.additionalNotes,
         });
-        return report;
+        return { ...report, patientName: finalPatientName };
       }),
 
     saveReport: protectedProcedure
