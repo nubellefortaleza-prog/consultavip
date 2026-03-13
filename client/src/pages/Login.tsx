@@ -96,14 +96,6 @@ export default function Login() {
         .login-btn:active:not(:disabled) {
           transform: translateY(0);
         }
-        .logo-shimmer {
-          background: linear-gradient(90deg, #F2D9C2 0%, #fff8f0 40%, #c9a87a 50%, #fff8f0 60%, #F2D9C2 100%);
-          background-size: 200% auto;
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-          background-clip: text;
-          animation: shimmer 4s linear infinite;
-        }
       `}</style>
 
       {/* Background */}
@@ -193,36 +185,20 @@ export default function Login() {
         >
           {/* Logo area */}
           <div style={{ textAlign: "center", marginBottom: "32px" }}>
-            {/* SVG Logo mark */}
-            <div style={{ display: "inline-block", marginBottom: "16px" }}>
-              <svg width="72" height="72" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <circle cx="36" cy="36" r="35" stroke="#F2D9C2" strokeWidth="1" opacity="0.6" />
-                <circle cx="36" cy="36" r="28" stroke="#c9a87a" strokeWidth="0.5" opacity="0.4" />
-                {/* Stylized V */}
-                <path d="M20 22 L36 50 L52 22" stroke="#F2D9C2" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
-                {/* Star accent */}
-                <circle cx="36" cy="50" r="2" fill="#c9a87a" />
-                <circle cx="20" cy="22" r="2" fill="#c9a87a" />
-                <circle cx="52" cy="22" r="2" fill="#c9a87a" />
-              </svg>
-            </div>
-            <h1
-              className="logo-shimmer"
+            <img
+              src="/logo-vip.svg"
+              alt="VIP Estetic"
               style={{
-                margin: 0,
-                fontSize: "32px",
-                letterSpacing: "6px",
-                fontFamily: "Georgia, 'Times New Roman', serif",
-                fontWeight: "normal",
-                display: "block",
+                width: "260px",
+                maxWidth: "80vw",
+                marginBottom: "12px",
+                filter: "drop-shadow(0 2px 12px rgba(242,217,194,0.18))",
               }}
-            >
-              VIP ESTETIC
-            </h1>
+            />
             <p
               style={{
                 color: "#AABAA4",
-                margin: "8px 0 0",
+                margin: "4px 0 0",
                 fontSize: "11px",
                 letterSpacing: "3px",
                 textTransform: "uppercase",

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 220" fill="none">
+  <text
+    x="260"
+    y="118"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="130"
+    font-weight="300"
+    letter-spacing="10"
+    fill="#F0EDE5"
+  >VIP</text>
+  <text
+    x="260"
+    y="195"
+    text-anchor="middle"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="54"
+    font-weight="300"
+    letter-spacing="18"
+    fill="#F0EDE5"
+  >ESTETIC</text>
+  <text
+    x="489"
+    y="178"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-size="18"
+    font-weight="300"
+    fill="#F0EDE5"
+  >®</text>
+</svg>
