@@ -51,7 +51,7 @@ export async function sendEmail(
 
   try {
     const info = await transporter.sendMail({
-      from: `"Vip Estetic" <${smtpUser}>`,
+      from: `"ConsultaVip - Vip Estetic" <${smtpUser}>`,
       to,
       subject: payload.subject,
       text: payload.text,

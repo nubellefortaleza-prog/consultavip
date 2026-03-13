@@ -15,9 +15,9 @@ function NavBar() {
     <nav className="fixed top-0 left-0 right-0 z-50 bg-white/90 backdrop-blur-md border-b border-[var(--color-vip-silk)]">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <img src={LOGO_URL} alt="Vip Estetic" className="h-8 w-auto" />
+          <img src={LOGO_URL} alt="Consulta Vip" className="h-8 w-auto" />
           <span className="font-serif text-lg font-semibold text-[var(--color-vip-noir)] hidden sm:block">
-            Vip <span className="text-[var(--color-vip-blush)]">Estetic</span>
+            Consulta<span className="text-[var(--color-vip-blush)]">Vip</span>
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -94,7 +94,7 @@ function HeroSection() {
                 <div key={i} className="w-7 h-7 rounded-full bg-[var(--color-vip-silk)] border-2 border-white flex items-center justify-center text-[10px] font-bold text-[var(--color-vip-blush)]">{l}</div>
               ))}
             </div>
-            <span>Clínicas já usam o Vip Estetic</span>
+            <span>Clínicas já usam o ConsultaVip</span>
           </div>
           <div className="flex items-center gap-1.5">
             {[1,2,3,4,5].map(i => <Star key={i} className="w-4 h-4 fill-amber-400 text-amber-400" />)}
@@ -240,7 +240,7 @@ function FeaturesSection() {
     <section id="beneficios" className="py-24 px-6 bg-[var(--color-vip-pearl)]">
       <div className="max-w-6xl mx-auto">
         <div className="text-center mb-14">
-          <p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-vip-blush)] font-sans mb-3">O que o Vip Estetic entrega</p>
+          <p className="text-xs font-semibold uppercase tracking-widest text-[var(--color-vip-blush)] font-sans mb-3">O que o ConsultaVip entrega</p>
           <h2 className="font-serif text-4xl md:text-5xl font-semibold text-[var(--color-vip-noir)] mb-4">
             Tudo que foi conversado,<br />combinado e planejado
           </h2>
@@ -595,13 +595,13 @@ function Footer() {
     <footer className="bg-[var(--color-vip-noir)] border-t border-white/10 py-8 px-6">
       <div className="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <img src={LOGO_URL} alt="Vip Estetic" className="h-7 w-auto opacity-70" />
+          <img src={LOGO_URL} alt="ConsultaVip" className="h-7 w-auto opacity-70" />
           <span className="font-serif text-base text-white/40">
-            Vip <span className="text-[var(--color-vip-blush)]/70">Estetic</span>
+            Consulta<span className="text-[var(--color-vip-blush)]/70">Vip</span>
           </span>
         </div>
         <p className="text-xs text-white/30 font-sans text-center">
-          © {new Date().getFullYear()} Vip Estetic · Todos os direitos reservados
+          © {new Date().getFullYear()} ConsultaVip · Todos os direitos reservados
         </p>
         <div className="flex items-center gap-2 text-xs text-white/30 font-sans">
           <Shield className="w-3.5 h-3.5" />

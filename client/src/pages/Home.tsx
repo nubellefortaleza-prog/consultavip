@@ -170,9 +170,9 @@ export default function Home() {
               <div className="w-16 h-16 mx-auto mb-6 rounded-full bg-[var(--color-vip-silk)] flex items-center justify-center">
                 <Mic className="w-8 h-8 text-[var(--color-vip-noir)]" />
               </div>
-              <h2 className="text-2xl font-semibold mb-3 text-[var(--color-vip-noir)]">Vip Estetic</h2>
+              <h2 className="text-2xl font-semibold mb-3 text-[var(--color-vip-noir)]">ConsultaVip</h2>
               <p className="text-sm text-[var(--color-vip-noir)]/60 mb-6 font-sans">Grave, transcreva e gere relatórios de consultas automaticamente com inteligência artificial.</p>
-              <Button onClick={() => (window.location.href = getLoginUrl())} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">Entrar no Vip Estetic</Button>
+              <Button onClick={() => (window.location.href = getLoginUrl())} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">Entrar no ConsultaVip</Button>
             </CardContent>
           </Card>
         </main>
@@ -291,7 +291,7 @@ function AppHeader({
         <div className="flex items-center gap-3">
           <img src={LOGO_URL} alt="Vip Estetic" className="h-8 md:h-10 w-auto" />
           <div className="hidden sm:block h-6 w-px bg-[var(--color-vip-silk)]" />
-          <span className="hidden sm:block text-xs font-sans font-medium text-[var(--color-vip-noir)]/50 uppercase tracking-widest">Vip Estetic</span>
+          <span className="hidden sm:block text-xs font-sans font-medium text-[var(--color-vip-noir)]/50 uppercase tracking-widest">ConsultaVip</span>
         </div>
         {user && (
           <div className="flex items-center gap-2">
@@ -438,7 +438,7 @@ function UserProfileModal({ user, onClose, onSaved }: { user: any; onClose: () =
 function AppFooter() {
   return (
     <footer className="py-4 text-center border-t border-[var(--color-vip-silk)]/30">
-      <p className="text-xs text-[var(--color-vip-noir)]/30 font-sans tracking-wide">Vip Estetic &copy; {new Date().getFullYear()}</p>
+      <p className="text-xs text-[var(--color-vip-noir)]/30 font-sans tracking-wide">ConsultaVip &bull; Vip Estetic &copy; {new Date().getFullYear()}</p>
     </footer>
   );
 }
@@ -1539,7 +1539,7 @@ function ReportModal({ consultation: c, onClose }: { consultation: any; onClose:
           ))}
         </div>
         <div className="bg-[var(--color-vip-pearl)] px-6 py-4 rounded-b-2xl flex items-center justify-between">
-          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans uppercase tracking-wider">Vip Estetic</p>
+          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans uppercase tracking-wider">ConsultaVip • Vip Estetic</p>
           <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
             {c.emailSent === "yes" ? "E-mail Enviado" : "E-mail Pendente"}
           </span>
