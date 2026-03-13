@@ -7,23 +7,37 @@ import { TRPCError } from "@trpc/server";
 import { transcribeAudio } from "./_core/voiceTranscription";
 import { invokeLLM } from "./_core/llm";
 import { storagePut } from "./storage";
-import { createConsultation, updateConsultation, getConsultationById, getConsultationsByUser, getUserByEmail } from "./db";
+import {
+  createConsultation, updateConsultation, getConsultationById, getConsultationsByUser,
+  getUserByEmail, getUserByOpenId, getAllUsers, createUser, updateUserProfile, deleteUser,
+  getSetting, setSetting, getAllSettings,
+} from "./db";
 import { nanoid } from "nanoid";
 import { GoogleGenAI } from "@google/genai";
 import { ENV } from "./_core/env";
 import { sendEmail } from "./email";
 import { sdk } from "./_core/sdk";
-import { verifyPassword } from "./_core/auth-utils";
+import { verifyPassword, hashPassword } from "./_core/auth-utils";
 import fs from "fs/promises";
 import path from "path";
 import { uploadFileToDrive, isDriveConfigured } from "./googleDrive";
 
-const DESTINATION_EMAIL = process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
+const DEFAULT_DESTINATION_EMAIL = process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
 
 export const appRouter = router({
   system: systemRouter,
   auth: router({
-    me: publicProcedure.query(opts => opts.ctx.user),
+    me: publicProcedure.query(async opts => {
+      if (!opts.ctx.user) return null;
+      const dbUser = await getUserByOpenId(opts.ctx.user.openId);
+      if (!dbUser) return opts.ctx.user;
+      return {
+        ...opts.ctx.user,
+        name: dbUser.name || opts.ctx.user.name,
+        profilePhoto: dbUser.profilePhoto ?? null,
+        reportEmail: dbUser.reportEmail ?? null,
+      };
+    }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
@@ -50,6 +64,102 @@ export const appRouter = router({
       }),
   }),
 
+  // ─── Admin Router ───────────────────────────────────────────────────────────
+  admin: router({
+    getSettings: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const s = await getAllSettings();
+      return {
+        smtpUser: s.smtp_user || "",
+        smtpPassSet: !!s.smtp_pass,
+        geminiKeySet: !!s.gemini_api_key,
+        destinationEmail: s.destination_email || DEFAULT_DESTINATION_EMAIL,
+      };
+    }),
+
+    saveSettings: protectedProcedure
+      .input(z.object({
+        smtpUser: z.string().optional(),
+        smtpPass: z.string().optional(),
+        geminiApiKey: z.string().optional(),
+        destinationEmail: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        if (input.smtpUser !== undefined) await setSetting("smtp_user", input.smtpUser);
+        if (input.smtpPass && input.smtpPass !== "••••••••") await setSetting("smtp_pass", input.smtpPass);
+        if (input.geminiApiKey && input.geminiApiKey !== "••••••••") await setSetting("gemini_api_key", input.geminiApiKey);
+        if (input.destinationEmail !== undefined) await setSetting("destination_email", input.destinationEmail);
+        return { success: true };
+      }),
+
+    listUsers: protectedProcedure.query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const users = await getAllUsers();
+      return users.map(u => ({
+        id: u.id,
+        name: u.name,
+        email: u.email,
+        role: u.role,
+        reportEmail: u.reportEmail,
+        profilePhoto: u.profilePhoto,
+        createdAt: u.createdAt,
+        lastSignedIn: u.lastSignedIn,
+      }));
+    }),
+
+    createUser: protectedProcedure
+      .input(z.object({
+        email: z.string().email(),
+        name: z.string().min(1),
+        password: z.string().min(6),
+        role: z.enum(["user", "admin"]),
+        reportEmail: z.string().email().optional().or(z.literal("")),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        const existing = await getUserByEmail(input.email);
+        if (existing) throw new TRPCError({ code: "CONFLICT", message: "E-mail já cadastrado." });
+        const passwordHash = await hashPassword(input.password);
+        await createUser({
+          email: input.email,
+          name: input.name,
+          passwordHash,
+          role: input.role,
+          reportEmail: input.reportEmail || undefined,
+        });
+        return { success: true };
+      }),
+
+    deleteUser: protectedProcedure
+      .input(z.object({ userId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        if (input.userId === ctx.user.id) throw new TRPCError({ code: "BAD_REQUEST", message: "Não é possível excluir o próprio usuário." });
+        await deleteUser(input.userId);
+        return { success: true };
+      }),
+  }),
+
+  // ─── User Router ─────────────────────────────────────────────────────────────
+  user: router({
+    updateProfile: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1).optional(),
+        profilePhoto: z.string().optional(),
+        reportEmail: z.string().email().optional().or(z.literal("")),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await updateUserProfile(ctx.user.id, {
+          name: input.name,
+          profilePhoto: input.profilePhoto,
+          reportEmail: input.reportEmail !== undefined ? (input.reportEmail || null) : undefined,
+        });
+        return { success: true };
+      }),
+  }),
+
+  // ─── Consultation Router ─────────────────────────────────────────────────────
   consultation: router({
     uploadAudio: protectedProcedure
       .input(z.object({
@@ -66,7 +176,6 @@ export const appRouter = router({
         }
         const ext = input.mimeType.includes("webm") ? "webm" : input.mimeType.includes("mp4") ? "m4a" : "wav";
 
-        // Format filename: NOME_TELEFONE_DDMMAAAA
         const sanitize = (s: string) =>
           s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9]/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "").substring(0, 40);
         const now = new Date();
@@ -90,13 +199,12 @@ export const appRouter = router({
     transcribe: protectedProcedure
       .input(z.object({ consultationId: z.number(), audioUrl: z.string() }))
       .mutation(async ({ input }) => {
-        // Attempt 1: Gemini direct API — reads file from disk (more reliable than HTTP fetch)
-        const geminiApiKey = process.env.GEMINI_API_KEY;
+        // Gemini key: DB setting takes priority over env var
+        const geminiApiKey = (await getSetting("gemini_api_key")) || process.env.GEMINI_API_KEY;
         if (geminiApiKey) {
           try {
             console.log("[Transcription] Trying Gemini direct API...");
 
-            // Try reading from disk first (faster, no HTTP roundtrip)
             let audioBuffer: Buffer | null = null;
             let mimeType = "audio/webm";
             const consultation = await getConsultationById(input.consultationId);
@@ -114,7 +222,6 @@ export const appRouter = router({
               }
             }
 
-            // Fallback: fetch from URL
             if (!audioBuffer) {
               const audioResp = await fetch(input.audioUrl);
               if (!audioResp.ok) throw new Error(`Failed to download audio: ${audioResp.status}`);
@@ -147,7 +254,6 @@ export const appRouter = router({
           console.warn("[Transcription] GEMINI_API_KEY não configurada, pulando Gemini.");
         }
 
-        // Attempt 2: Whisper via Forge API (with retry)
         for (let attempt = 0; attempt < 2; attempt++) {
           const whisperResult = await transcribeAudio({
             audioUrl: input.audioUrl,
@@ -166,7 +272,6 @@ export const appRouter = router({
           }
         }
 
-        // Attempt 3: Use invokeLLM (Forge API) with file_url for audio transcription
         try {
           console.log("[Transcription] Trying invokeLLM with file_url...");
           const llmResult = await invokeLLM({
@@ -205,7 +310,7 @@ export const appRouter = router({
         throw new TRPCError({
           code: "INTERNAL_SERVER_ERROR",
           message: !geminiApiKey
-            ? "Transcrição não configurada. Adicione GEMINI_API_KEY no arquivo .env do servidor."
+            ? "Transcrição não configurada. Adicione GEMINI_API_KEY nas configurações do painel admin."
             : "Falha na transcrição. Todos os serviços falharam. Tente novamente em alguns instantes.",
         });
       }),
@@ -213,9 +318,10 @@ export const appRouter = router({
     generateReport: protectedProcedure
       .input(z.object({ consultationId: z.number(), transcription: z.string() }))
       .mutation(async ({ input }) => {
-        const geminiApiKey = process.env.GEMINI_API_KEY;
+        // Gemini key: DB setting takes priority over env var
+        const geminiApiKey = (await getSetting("gemini_api_key")) || process.env.GEMINI_API_KEY;
         if (!geminiApiKey) {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "GEMINI_API_KEY não configurada no servidor. Adicione no arquivo .env." });
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "GEMINI_API_KEY não configurada. Configure no Painel Admin → Configurações." });
         }
 
         const now = new Date();
@@ -243,7 +349,6 @@ ${input.transcription}`;
         });
 
         const rawText = response.text?.trim() || "";
-        // Remove markdown code fences if Gemini wraps the JSON
         const jsonText = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
         let report: any;
@@ -297,7 +402,21 @@ ${input.transcription}`;
         closedDeal: z.string(),
         additionalNotes: z.string(),
       }))
-      .mutation(async ({ input }) => {
+      .mutation(async ({ input, ctx }) => {
+        // Load dynamic settings from DB
+        const [dbUser, smtpUserSetting, smtpPassSetting, destinationEmailSetting] = await Promise.all([
+          getUserByOpenId(ctx.user.openId),
+          getSetting("smtp_user"),
+          getSetting("smtp_pass"),
+          getSetting("destination_email"),
+        ]);
+
+        const doctorName = dbUser?.name || ctx.user.name || "Não informado";
+        const recipientEmail = dbUser?.reportEmail || destinationEmailSetting || DEFAULT_DESTINATION_EMAIL;
+        const smtpCredentials = smtpUserSetting && smtpPassSetting
+          ? { smtpUser: smtpUserSetting, smtpPass: smtpPassSetting }
+          : undefined;
+
         const dateForSubject = input.consultationDate.split(" ")[0] || input.consultationDate;
         const subject = `${input.patientName} - ${dateForSubject}`;
 
@@ -305,6 +424,7 @@ ${input.transcription}`;
           "RELATÓRIO DE CONSULTA - VIP ESTETIC",
           "═".repeat(50),
           "",
+          `MÉDICO(A) RESPONSÁVEL: ${doctorName}`,
           `NOME DO PACIENTE: ${input.patientName}`,
           `DATA E HORÁRIO: ${input.consultationDate}`,
           `PERFIL DO PACIENTE: ${input.patientProfile}`,
@@ -318,7 +438,8 @@ ${input.transcription}`;
           "Relatório gerado automaticamente pelo ConsultaVip - Vip Estetic",
         ].join("\n");
 
-        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">VIP ESTETIC</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${[
+        const tableRows = [
+          ["Médico(a) Responsável", doctorName],
           ["Nome do Paciente", input.patientName],
           ["Data e Horário", input.consultationDate],
           ["Perfil do Paciente", input.patientProfile],
@@ -327,9 +448,10 @@ ${input.transcription}`;
           ["Orçamento Apresentado", input.budgetPresented],
           ["O que foi Fechado", input.closedDeal],
           ["Observações Adicionais", input.additionalNotes],
-        ].map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
+        ];
 
-        // Save report data first
+        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">VIP ESTETIC</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${tableRows.map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • VIP ESTETIC • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
+
         await updateConsultation(input.consultationId, {
           patientName: input.patientName, consultationDate: input.consultationDate,
           patientProfile: input.patientProfile, mainComplaints: input.mainComplaints,
@@ -341,17 +463,20 @@ ${input.transcription}`;
         const safeDate = (input.consultationDate.split(" ")[0] || "").replace(/\//g, "");
 
         try {
-          await sendEmail({
-            to: DESTINATION_EMAIL,
-            subject,
-            text: reportText,
-            html: htmlReport,
-            attachments: [{
-              filename: `Relatorio_${safeName}_${safeDate}.txt`,
-              content: reportText,
-              contentType: "text/plain",
-            }],
-          });
+          await sendEmail(
+            {
+              to: recipientEmail,
+              subject,
+              text: reportText,
+              html: htmlReport,
+              attachments: [{
+                filename: `Relatorio_${safeName}_${safeDate}.txt`,
+                content: reportText,
+                contentType: "text/plain",
+              }],
+            },
+            smtpCredentials,
+          );
 
           await updateConsultation(input.consultationId, { emailSent: "yes", emailSentAt: new Date() });
           return { success: true, message: "E-mail enviado com sucesso!" };
@@ -408,10 +533,7 @@ ${input.transcription}`;
 
         const { fileId, webViewLink } = await uploadFileToDrive(fileBuffer, filename, mimeType);
 
-        // Delete local file after successful upload
         await fs.unlink(filePath);
-
-        // Update audioUrl to point to Drive
         await updateConsultation(input.consultationId, { audioUrl: webViewLink });
 
         console.log(`[Drive] Backed up and deleted local: ${filePath} → ${webViewLink}`);
@@ -446,19 +568,20 @@ ${input.transcription}`;
         // directory doesn't exist yet
       }
 
-      // Count consultations in DB
       let dbCount = 0;
       try {
         const rows = await getConsultationsByUser(ctx.user.id);
         dbCount = rows.length;
       } catch { /* db error */ }
 
+      const geminiFromDb = !!(await getSetting("gemini_api_key"));
+
       return {
         uploadsDir,
         fileCount,
         files: files.slice(0, 50),
         appBaseUrl: process.env.APP_BASE_URL || "(não definido)",
-        geminiConfigured: !!process.env.GEMINI_API_KEY,
+        geminiConfigured: geminiFromDb || !!process.env.GEMINI_API_KEY,
         dbConsultationsForUser: dbCount,
         nodeVersion: process.version,
         cwd: process.cwd(),

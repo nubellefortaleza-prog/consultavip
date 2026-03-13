@@ -1,6 +1,6 @@
 import { eq, desc, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users, consultations, InsertConsultation } from "../drizzle/schema";
+import { InsertUser, users, consultations, InsertConsultation, settings } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { hashPassword } from './_core/auth-utils';
 
@@ -42,14 +42,19 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         CONSTRAINT \`users_openId_unique\` UNIQUE(\`openId\`)
       )
     `);
-    // Add passwordHash to existing tables (compatible with MySQL 5.7+)
-    try {
-      await db.execute(sql`ALTER TABLE \`users\` ADD COLUMN \`passwordHash\` text`);
-    } catch (e: any) {
-      // Drizzle wraps mysql2 errors: errno may be on e.cause, not on e directly
-      const errNo = e?.errno ?? e?.cause?.errno;
-      if (errNo !== 1060) console.warn("[Database] passwordHash migration:", e?.message);
-    }
+
+    // Incremental migrations — ignore "duplicate column" errors (errno 1060)
+    const addColumn = async (alter: string) => {
+      try { await db.execute(sql.raw(alter)); } catch (e: any) {
+        const errNo = e?.errno ?? e?.cause?.errno;
+        if (errNo !== 1060) console.warn("[Database] migration warning:", e?.message);
+      }
+    };
+
+    await addColumn("ALTER TABLE `users` ADD COLUMN `passwordHash` text");
+    await addColumn("ALTER TABLE `users` ADD COLUMN `profilePhoto` text");
+    await addColumn("ALTER TABLE `users` ADD COLUMN `reportEmail` varchar(320)");
+
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS \`consultations\` (
         \`id\` int AUTO_INCREMENT NOT NULL,
@@ -73,13 +78,18 @@ async function initializeSchema(db: ReturnType<typeof drizzle>) {
         CONSTRAINT \`consultations_id\` PRIMARY KEY(\`id\`)
       )
     `);
-    // Add patientPhone to existing consultations tables (after CREATE TABLE IF NOT EXISTS)
-    try {
-      await db.execute(sql`ALTER TABLE \`consultations\` ADD COLUMN \`patientPhone\` varchar(32)`);
-    } catch (e: any) {
-      const errNo = e?.errno ?? e?.cause?.errno;
-      if (errNo !== 1060) console.warn("[Database] patientPhone migration:", e?.message);
-    }
+
+    await addColumn("ALTER TABLE `consultations` ADD COLUMN `patientPhone` varchar(32)");
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS \`settings\` (
+        \`key\` varchar(100) NOT NULL,
+        \`value\` text,
+        \`updatedAt\` timestamp NOT NULL DEFAULT (now()) ON UPDATE CURRENT_TIMESTAMP,
+        CONSTRAINT \`settings_key\` PRIMARY KEY(\`key\`)
+      )
+    `);
+
     console.log("[Database] Schema initialized successfully");
   } catch (error) {
     console.warn("[Database] Schema initialization warning:", error);
@@ -164,6 +174,55 @@ export async function getUserByEmail(email: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
+export async function getAllUsers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select().from(users).orderBy(desc(users.createdAt));
+}
+
+export async function createUser(data: {
+  email: string;
+  name: string;
+  passwordHash: string;
+  role: "user" | "admin";
+  reportEmail?: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(users).values({
+    openId: `local:${data.email}`,
+    email: data.email,
+    name: data.name,
+    passwordHash: data.passwordHash,
+    role: data.role,
+    reportEmail: data.reportEmail ?? null,
+    loginMethod: "password",
+    lastSignedIn: new Date(),
+  });
+}
+
+export async function updateUserProfile(id: number, data: {
+  name?: string;
+  profilePhoto?: string;
+  reportEmail?: string | null;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updateSet: Record<string, unknown> = {};
+  if (data.name !== undefined) updateSet.name = data.name;
+  if (data.profilePhoto !== undefined) updateSet.profilePhoto = data.profilePhoto;
+  if (data.reportEmail !== undefined) updateSet.reportEmail = data.reportEmail;
+  if (Object.keys(updateSet).length > 0) {
+    await db.update(users).set(updateSet).where(eq(users.id, id));
+  }
+}
+
+export async function deleteUser(id: number): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.delete(users).where(eq(users.id, id));
+}
+
 export async function seedAdminUser(): Promise<void> {
   const adminEmail = process.env.ADMIN_EMAIL;
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -174,7 +233,6 @@ export async function seedAdminUser(): Promise<void> {
 
   const existing = await getUserByEmail(adminEmail);
   if (existing) {
-    // Update password hash if it's missing
     if (!existing.passwordHash) {
       const passwordHash = await hashPassword(adminPassword);
       await db.update(users).set({ passwordHash }).where(eq(users.email, adminEmail));
@@ -194,6 +252,28 @@ export async function seedAdminUser(): Promise<void> {
     lastSignedIn: new Date(),
   });
   console.log("[Auth] Admin user created:", adminEmail);
+}
+
+// --- Settings helpers ---
+
+export async function getSetting(key: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const result = await db.select().from(settings).where(eq(settings.key, key)).limit(1);
+  return result.length > 0 ? (result[0].value ?? null) : null;
+}
+
+export async function setSetting(key: string, value: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.insert(settings).values({ key, value }).onDuplicateKeyUpdate({ set: { value } });
+}
+
+export async function getAllSettings(): Promise<Record<string, string>> {
+  const db = await getDb();
+  if (!db) return {};
+  const rows = await db.select().from(settings);
+  return Object.fromEntries(rows.map(r => [r.key, r.value ?? ""]));
 }
 
 // --- Consultation helpers ---

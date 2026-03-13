@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import {
   Mic, Square, Pause, Play, Loader2, CheckCircle2, RotateCcw, Clock, LogOut,
   History, FileText, CloudUpload, BarChart2, Users, Settings, Shield,
-  Bell, Database, X, NotebookPen, ChevronRight, Zap,
+  Bell, Database, X, NotebookPen, ChevronRight, Zap, Eye, EyeOff, Trash2,
+  UserPlus, Camera, Mail,
 } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
 
@@ -30,24 +31,13 @@ type ReportData = {
   additionalNotes: string;
 };
 
-const REPORT_LABELS: Record<keyof ReportData, string> = {
-  patientName: "NOME DO PACIENTE",
-  consultationDate: "DATA E HORÁRIO",
-  patientProfile: "PERFIL DO PACIENTE",
-  mainComplaints: "QUEIXAS PRINCIPAIS",
-  treatmentPlan: "PLANO DE TRATAMENTO INDICADO",
-  budgetPresented: "ORÇAMENTO APRESENTADO",
-  closedDeal: "O QUE FOI FECHADO",
-  additionalNotes: "OBSERVAÇÕES ADICIONAIS",
-};
-
 const FIELD_ORDER: (keyof ReportData)[] = [
   "patientName", "consultationDate", "patientProfile", "mainComplaints",
   "treatmentPlan", "budgetPresented", "closedDeal", "additionalNotes",
 ];
 
 export default function Home() {
-  const { user, loading: authLoading, isAuthenticated, logout } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, logout, refresh: refreshAuth } = useAuth();
   const recorder = useAudioRecorder();
   const [step, setStep] = useState<AppStep>("info");
   const [patientName, setPatientName] = useState("");
@@ -55,6 +45,7 @@ export default function Home() {
   const [notes, setNotes] = useState("");
   const [showHistory, setShowHistory] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
   const bgProcessingRef = useRef(false);
   const waitingForBlobRef = useRef(false);
 
@@ -75,7 +66,6 @@ export default function Home() {
     recorder.stopRecording();
   }, [recorder]);
 
-  // When blob is ready after stop → go to notes step
   useEffect(() => {
     if (waitingForBlobRef.current && recorder.audioBlob && recorder.state === "stopped" && step === "record") {
       waitingForBlobRef.current = false;
@@ -91,7 +81,6 @@ export default function Home() {
     const capturedName = patientName;
     const capturedPhone = patientPhone;
 
-    // Reset UI immediately → doctor goes back to initial screen
     setStep("info");
     setPatientName("");
     setPatientPhone("");
@@ -204,6 +193,7 @@ export default function Home() {
         isAdmin={isAdmin}
         onToggleAdmin={() => { setShowAdmin(!showAdmin); setShowHistory(false); }}
         showAdmin={showAdmin}
+        onOpenProfile={() => setShowProfile(true)}
       />
       <main className="flex-1 container py-6 md:py-10">
         {showAdmin && isAdmin ? (
@@ -222,7 +212,6 @@ export default function Home() {
         ) : (
           <div className="max-w-2xl mx-auto">
             <StepIndicator currentStep={step} />
-
             {step === "info" && (
               <PatientInfoCard
                 patientName={patientName}
@@ -232,7 +221,6 @@ export default function Home() {
                 onConfirm={() => setStep("record")}
               />
             )}
-
             {step === "record" && (
               <RecordingCard
                 recorderState={recorder.state}
@@ -243,7 +231,6 @@ export default function Home() {
                 onResume={recorder.resumeRecording}
               />
             )}
-
             {step === "notes" && (
               <NotesCard
                 notes={notes}
@@ -256,15 +243,47 @@ export default function Home() {
         )}
       </main>
       <AppFooter />
+
+      {showProfile && user && (
+        <UserProfileModal
+          user={user}
+          onClose={() => setShowProfile(false)}
+          onSaved={() => { setShowProfile(false); refreshAuth(); }}
+        />
+      )}
     </div>
   );
 }
 
+// ─── Avatar helper ───────────────────────────────────────────────────────────
+
+function UserAvatar({ user, size = "sm", onClick }: { user: any; size?: "sm" | "md"; onClick?: () => void }) {
+  const initials = (user?.name || user?.email || "U").charAt(0).toUpperCase();
+  const cls = size === "sm" ? "w-8 h-8 text-sm" : "w-14 h-14 text-xl";
+  return (
+    <button
+      onClick={onClick}
+      title="Meu perfil"
+      className={`${cls} rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden border-2 border-[var(--color-vip-silk)] hover:border-[var(--color-vip-blush)] transition-colors`}
+    >
+      {user?.profilePhoto ? (
+        <img src={user.profilePhoto} alt={user.name || "avatar"} className="w-full h-full object-cover" />
+      ) : (
+        <span className="bg-[var(--color-vip-silk)] w-full h-full flex items-center justify-center font-semibold text-[var(--color-vip-noir)]">
+          {initials}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── App Header ───────────────────────────────────────────────────────────────
+
 function AppHeader({
-  user, onLogout, onToggleHistory, showHistory, isAdmin, onToggleAdmin, showAdmin,
+  user, onLogout, onToggleHistory, showHistory, isAdmin, onToggleAdmin, showAdmin, onOpenProfile,
 }: {
   user?: any; onLogout?: () => void; onToggleHistory?: () => void; showHistory?: boolean;
-  isAdmin?: boolean; onToggleAdmin?: () => void; showAdmin?: boolean;
+  isAdmin?: boolean; onToggleAdmin?: () => void; showAdmin?: boolean; onOpenProfile?: () => void;
 }) {
   return (
     <header className="bg-white/70 backdrop-blur-md border-b border-[var(--color-vip-silk)]/50 sticky top-0 z-50">
@@ -286,7 +305,7 @@ function AppHeader({
                 <History className="w-4 h-4 mr-1" /><span className="hidden sm:inline">Histórico</span>
               </Button>
             )}
-            <span className="text-xs text-[var(--color-vip-noir)]/50 font-sans hidden md:block">{user.name || user.email}</span>
+            <UserAvatar user={user} size="sm" onClick={onOpenProfile} />
             <Button variant="ghost" size="sm" onClick={onLogout} className="text-xs text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-noir)] font-sans">
               <LogOut className="w-4 h-4" />
             </Button>
@@ -294,6 +313,125 @@ function AppHeader({
         )}
       </div>
     </header>
+  );
+}
+
+// ─── User Profile Modal ───────────────────────────────────────────────────────
+
+function UserProfileModal({ user, onClose, onSaved }: { user: any; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(user?.name || "");
+  const [reportEmail, setReportEmail] = useState(user?.reportEmail || "");
+  const [photoPreview, setPhotoPreview] = useState<string>(user?.profilePhoto || "");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const updateProfile = trpc.user.updateProfile.useMutation();
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) { toast.error("Foto muito grande. Máximo 500KB."); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    try {
+      await updateProfile.mutateAsync({
+        name: name.trim() || undefined,
+        profilePhoto: photoPreview || undefined,
+        reportEmail: reportEmail.trim(),
+      });
+      toast.success("Perfil atualizado!");
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar perfil");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--color-vip-noir)] px-6 py-5 flex items-center justify-between">
+          <h2 className="text-[var(--color-vip-silk)] font-semibold tracking-wide text-sm uppercase">Meu Perfil</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        <div className="bg-white px-6 py-6 space-y-5">
+          {/* Photo */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-[var(--color-vip-silk)] flex items-center justify-center bg-[var(--color-vip-silk)]">
+                {photoPreview ? (
+                  <img src={photoPreview} alt="Foto" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-2xl font-bold text-[var(--color-vip-noir)]">
+                    {(name || user?.email || "U").charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[var(--color-vip-blush)] flex items-center justify-center shadow-md hover:bg-[var(--color-vip-blush)]/90 transition-colors"
+              >
+                <Camera className="w-3.5 h-3.5 text-white" />
+              </button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+            {photoPreview && photoPreview !== user?.profilePhoto && (
+              <button onClick={() => setPhotoPreview("")} className="text-xs text-[var(--color-vip-noir)]/40 hover:text-red-500 font-sans">
+                Remover foto
+              </button>
+            )}
+            <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">Clique no ícone para alterar (máx. 500KB)</p>
+          </div>
+
+          {/* Name */}
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              Nome completo
+            </Label>
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Dr. João Silva"
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+          </div>
+
+          {/* Email */}
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              E-mail para receber relatórios
+            </Label>
+            <Input
+              type="email"
+              value={reportEmail}
+              onChange={e => setReportEmail(e.target.value)}
+              placeholder="meu@email.com (opcional)"
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">
+              Se preenchido, os relatórios serão enviados para este e-mail em vez do padrão.
+            </p>
+          </div>
+
+          <div className="pt-2 flex gap-3">
+            <Button
+              onClick={handleSave}
+              disabled={updateProfile.isPending}
+              className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
+            >
+              {updateProfile.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar Perfil"}
+            </Button>
+            <Button onClick={onClose} variant="outline" className="border-[var(--color-vip-silk)] font-sans">
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -492,23 +630,11 @@ function NotesCard({ notes, onNotesChange, onFinish, onCancel }: {
 
 // ─── Admin View ────────────────────────────────────────────────────────────────
 
-const ADMIN_STATS = [
-  { label: "Total de Consultas", value: "—", icon: FileText, color: "text-[var(--color-vip-blush)]", bg: "bg-[var(--color-vip-blush)]/10" },
-  { label: "Consultas Hoje", value: "—", icon: Mic, color: "text-[var(--color-vip-terracotta)]", bg: "bg-[var(--color-vip-terracotta)]/10" },
-  { label: "E-mails Enviados", value: "—", icon: Bell, color: "text-[var(--color-vip-sage)]", bg: "bg-[var(--color-vip-sage)]/10" },
-  { label: "Usuários Ativos", value: "—", icon: Users, color: "text-[var(--color-vip-noir)]", bg: "bg-[var(--color-vip-silk)]/50" },
-];
-
-const ADMIN_FEATURES = [
-  { icon: Users, label: "Gestão de Usuários", desc: "Cadastrar, editar e remover usuários do sistema" },
-  { icon: BarChart2, label: "Relatórios Avançados", desc: "Dashboard com métricas e análises de consultas" },
-  { icon: Settings, label: "Configurações do Sistema", desc: "E-mail, IA, integrações e parâmetros gerais" },
-  { icon: Database, label: "Backup Automático", desc: "Exportação periódica para Google Drive" },
-  { icon: FileText, label: "Templates de Relatório", desc: "Personalizar o formato dos relatórios gerados pela IA" },
-  { icon: CloudUpload, label: "Armazenamento em Nuvem", desc: "Gerenciar arquivos de áudio e relatórios" },
-];
+type AdminTab = "settings" | "users";
 
 function AdminView({ onBack }: { onBack: () => void }) {
+  const [activeTab, setActiveTab] = useState<AdminTab>("settings");
+
   return (
     <div className="max-w-3xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
@@ -519,61 +645,334 @@ function AdminView({ onBack }: { onBack: () => void }) {
         </div>
       </div>
 
-      {/* Coming soon banner */}
-      <Card className="border-0 shadow-md bg-[var(--color-vip-noir)] mb-6">
-        <CardContent className="p-5 flex items-start gap-4">
-          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-blush)]/20 flex items-center justify-center flex-shrink-0">
-            <Zap className="w-5 h-5 text-[var(--color-vip-blush)]" />
-          </div>
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-vip-silk)] mb-1">Funcionalidades em desenvolvimento</h3>
-            <p className="text-xs text-[var(--color-vip-silk)]/50 font-sans leading-relaxed">
-              O painel administrativo está sendo construído. Em breve você terá acesso completo à gestão de usuários, métricas de consultas, configurações avançadas e muito mais.
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats grid */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {ADMIN_STATS.map(({ label, value, icon: Icon, color, bg }) => (
-          <Card key={label} className="border-0 shadow-md bg-white/80">
-            <CardContent className="p-4 text-center">
-              <div className={`w-10 h-10 rounded-full ${bg} flex items-center justify-center mx-auto mb-2`}>
-                <Icon className={`w-5 h-5 ${color}`} />
-              </div>
-              <p className="text-2xl font-bold text-[var(--color-vip-noir)]/30 mb-1">{value}</p>
-              <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">{label}</p>
-              <span className="text-[10px] bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/30 px-2 py-0.5 rounded-full font-sans mt-1 inline-block">em breve</span>
-            </CardContent>
-          </Card>
+      {/* Tabs */}
+      <div className="flex gap-1 bg-[var(--color-vip-silk)]/30 p-1 rounded-xl mb-6">
+        {([
+          { key: "settings", label: "Configurações", icon: Settings },
+          { key: "users", label: "Usuários", icon: Users },
+        ] as { key: AdminTab; label: string; icon: any }[]).map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-sans font-medium transition-all ${
+              activeTab === key
+                ? "bg-white shadow-sm text-[var(--color-vip-noir)]"
+                : "text-[var(--color-vip-noir)]/50 hover:text-[var(--color-vip-noir)]/80"
+            }`}
+          >
+            <Icon className="w-4 h-4" />{label}
+          </button>
         ))}
       </div>
 
-      {/* Features list */}
+      {activeTab === "settings" && <AdminSettingsTab />}
+      {activeTab === "users" && <AdminUsersTab />}
+    </div>
+  );
+}
+
+// ─── Admin Settings Tab ───────────────────────────────────────────────────────
+
+function AdminSettingsTab() {
+  const settingsQuery = trpc.admin.getSettings.useQuery();
+  const saveMutation = trpc.admin.saveSettings.useMutation();
+
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [geminiKey, setGeminiKey] = useState("");
+  const [showGemini, setShowGemini] = useState(false);
+  const [destEmail, setDestEmail] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (settingsQuery.data && !loaded) {
+      setSmtpUser(settingsQuery.data.smtpUser || "");
+      setDestEmail(settingsQuery.data.destinationEmail || "");
+      setLoaded(true);
+    }
+  }, [settingsQuery.data, loaded]);
+
+  const handleSave = async () => {
+    try {
+      await saveMutation.mutateAsync({
+        smtpUser: smtpUser.trim(),
+        smtpPass: smtpPass || undefined,
+        geminiApiKey: geminiKey || undefined,
+        destinationEmail: destEmail.trim(),
+      });
+      toast.success("Configurações salvas!");
+      setSmtpPass("");
+      setGeminiKey("");
+      settingsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar");
+    }
+  };
+
+  if (settingsQuery.isLoading) {
+    return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>;
+  }
+
+  const s = settingsQuery.data;
+
+  return (
+    <div className="space-y-4">
+      {/* SMTP */}
       <Card className="border-0 shadow-md bg-white/80">
         <CardContent className="p-6">
-          <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider mb-4 font-sans">Funcionalidades Planejadas</h3>
-          <div className="space-y-3">
-            {ADMIN_FEATURES.map(({ icon: Icon, label, desc }) => (
-              <div key={label} className="flex items-center gap-3 py-3 border-b border-[var(--color-vip-silk)]/50 last:border-0">
-                <div className="w-9 h-9 rounded-lg bg-[var(--color-vip-silk)]/40 flex items-center justify-center flex-shrink-0">
-                  <Icon className="w-4 h-4 text-[var(--color-vip-noir)]/40" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-[var(--color-vip-noir)]/70">{label}</p>
-                  <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">{desc}</p>
-                </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <span className="text-[10px] bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)] px-2 py-0.5 rounded-full font-sans">em breve</span>
-                  <ChevronRight className="w-4 h-4 text-[var(--color-vip-noir)]/20" />
-                </div>
+          <div className="flex items-center gap-2 mb-4">
+            <Mail className="w-4 h-4 text-[var(--color-vip-blush)]" />
+            <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Configurações de E-mail (SMTP)</h3>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                E-mail Gmail (remetente)
+              </Label>
+              <Input
+                type="email"
+                value={smtpUser}
+                onChange={e => setSmtpUser(e.target.value)}
+                placeholder="seuemail@gmail.com"
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                Senha de App Gmail {s?.smtpPassSet && <span className="text-[var(--color-vip-sage)] normal-case font-normal">(configurada)</span>}
+              </Label>
+              <div className="relative">
+                <Input
+                  type={showSmtpPass ? "text" : "password"}
+                  value={smtpPass}
+                  onChange={e => setSmtpPass(e.target.value)}
+                  placeholder={s?.smtpPassSet ? "••••••••••••••• (deixe vazio para manter)" : "Senha de App do Gmail"}
+                  className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans pr-10"
+                />
+                <button type="button" onClick={() => setShowSmtpPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                  {showSmtpPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
               </div>
-            ))}
+              <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Use uma Senha de App gerada nas configurações de segurança do Google.</p>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                E-mail padrão de destino dos relatórios
+              </Label>
+              <Input
+                type="email"
+                value={destEmail}
+                onChange={e => setDestEmail(e.target.value)}
+                placeholder="destinatario@email.com"
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+              />
+              <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Os relatórios serão enviados para este e-mail (pode ser sobrescrito por usuário).</p>
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Gemini */}
+      <Card className="border-0 shadow-md bg-white/80">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-4 h-4 text-[var(--color-vip-blush)]" />
+            <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Inteligência Artificial (Gemini)</h3>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              Chave API Gemini {s?.geminiKeySet && <span className="text-[var(--color-vip-sage)] normal-case font-normal">(configurada)</span>}
+            </Label>
+            <div className="relative">
+              <Input
+                type={showGemini ? "text" : "password"}
+                value={geminiKey}
+                onChange={e => setGeminiKey(e.target.value)}
+                placeholder={s?.geminiKeySet ? "••••••••••••••• (deixe vazio para manter)" : "AIza..."}
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans pr-10"
+              />
+              <button type="button" onClick={() => setShowGemini(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                {showGemini ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Obtida em <span className="font-mono">aistudio.google.com</span>. Usada para transcrição e geração de relatórios.</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Button
+        onClick={handleSave}
+        disabled={saveMutation.isPending}
+        className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
+        size="lg"
+      >
+        {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+        Salvar Configurações
+      </Button>
     </div>
+  );
+}
+
+// ─── Admin Users Tab ──────────────────────────────────────────────────────────
+
+function AdminUsersTab() {
+  const usersQuery = trpc.admin.listUsers.useQuery();
+  const deleteMutation = trpc.admin.deleteUser.useMutation();
+  const [showCreateForm, setShowCreateForm] = useState(false);
+
+  const handleDelete = async (userId: number, name: string) => {
+    if (!confirm(`Excluir o usuário "${name}"?`)) return;
+    try {
+      await deleteMutation.mutateAsync({ userId });
+      toast.success("Usuário excluído.");
+      usersQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao excluir");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--color-vip-noir)]/60 font-sans">
+          {usersQuery.data?.length ?? 0} usuário(s) cadastrado(s)
+        </p>
+        <Button
+          onClick={() => setShowCreateForm(v => !v)}
+          className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans text-sm"
+          size="sm"
+        >
+          <UserPlus className="w-4 h-4 mr-1.5" />
+          {showCreateForm ? "Cancelar" : "Novo Usuário"}
+        </Button>
+      </div>
+
+      {showCreateForm && (
+        <CreateUserForm onCreated={() => { setShowCreateForm(false); usersQuery.refetch(); }} />
+      )}
+
+      {usersQuery.isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>
+      ) : (
+        <div className="space-y-2">
+          {(usersQuery.data || []).map(u => (
+            <Card key={u.id} className="border-0 shadow-sm bg-white/80">
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
+                  {u.profilePhoto ? (
+                    <img src={u.profilePhoto} alt={u.name || "user"} className="w-full h-full object-cover" />
+                  ) : (
+                    <span className="text-sm font-bold text-[var(--color-vip-noir)]">
+                      {(u.name || u.email || "U").charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{u.name || "Sem nome"}</p>
+                  <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans truncate">{u.email}</p>
+                  {u.reportEmail && (
+                    <p className="text-xs text-[var(--color-vip-blush)]/70 font-sans truncate">📧 {u.reportEmail}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`text-xs px-2 py-1 rounded-full font-sans ${
+                    u.role === "admin"
+                      ? "bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)]"
+                      : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/50"
+                  }`}>
+                    {u.role === "admin" ? "Admin" : "Usuário"}
+                  </span>
+                  <button
+                    onClick={() => handleDelete(u.id, u.name || u.email || String(u.id))}
+                    disabled={deleteMutation.isPending}
+                    className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    title="Excluir usuário"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CreateUserForm({ onCreated }: { onCreated: () => void }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [role, setRole] = useState<"user" | "admin">("user");
+  const [reportEmail, setReportEmail] = useState("");
+  const createMutation = trpc.admin.createUser.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createMutation.mutateAsync({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        role,
+        reportEmail: reportEmail.trim() || undefined,
+      });
+      toast.success(`Usuário ${name} criado!`);
+      onCreated();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao criar usuário");
+    }
+  };
+
+  return (
+    <Card className="border-0 shadow-md bg-[var(--color-vip-pearl)] border border-[var(--color-vip-silk)]">
+      <CardContent className="p-5">
+        <h4 className="text-sm font-semibold text-[var(--color-vip-noir)] mb-4 font-sans uppercase tracking-wider">Novo Usuário</h4>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Dr. Nome Completo" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Perfil</Label>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value as "user" | "admin")}
+                className="w-full h-10 px-3 rounded-md border border-[var(--color-vip-silk)] bg-white font-sans text-sm text-[var(--color-vip-noir)] focus:outline-none focus:ring-2 focus:ring-[var(--color-vip-blush)]/50"
+              >
+                <option value="user">Usuário</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail de login</Label>
+            <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@email.com" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Senha</Label>
+            <div className="relative">
+              <Input type={showPass ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10" />
+              <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail para relatórios (opcional)</Label>
+            <Input type="email" value={reportEmail} onChange={e => setReportEmail(e.target.value)} placeholder="relatorios@email.com" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+          </div>
+          <Button type="submit" disabled={createMutation.isPending} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+            Criar Usuário
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -692,7 +1091,6 @@ function ReportModal({ consultation: c, onClose }: { consultation: any; onClose:
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
       <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
-        {/* Header */}
         <div className="bg-[var(--color-vip-noir)] px-6 py-5 flex items-center justify-between rounded-t-2xl">
           <div>
             <h2 className="text-[var(--color-vip-silk)] font-semibold tracking-widest text-sm uppercase">VIP ESTETIC</h2>
@@ -702,8 +1100,6 @@ function ReportModal({ consultation: c, onClose }: { consultation: any; onClose:
             <X className="w-4 h-4 text-white" />
           </button>
         </div>
-
-        {/* Body */}
         <div className="bg-white px-6 py-6 space-y-4">
           {fields.map(([label, value]) => (
             <div key={label} className="border-b border-[var(--color-vip-silk)]/50 pb-3 last:border-0">
@@ -712,8 +1108,6 @@ function ReportModal({ consultation: c, onClose }: { consultation: any; onClose:
             </div>
           ))}
         </div>
-
-        {/* Footer */}
         <div className="bg-[var(--color-vip-pearl)] px-6 py-4 rounded-b-2xl flex items-center justify-between">
           <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans uppercase tracking-wider">ConsultaVip • Vip Estetic</p>
           <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>

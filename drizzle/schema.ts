@@ -21,10 +21,20 @@ export const users = mysqlTable("users", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
   passwordHash: text("passwordHash"),
+  profilePhoto: text("profilePhoto"),
+  reportEmail: varchar("reportEmail", { length: 320 }),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
+
+export const settings = mysqlTable("settings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: text("value"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Setting = typeof settings.$inferSelect;
 
 export const consultations = mysqlTable("consultations", {
   id: int("id").autoincrement().primaryKey(),
