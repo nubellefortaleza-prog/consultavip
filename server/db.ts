@@ -201,6 +201,26 @@ export async function createUser(data: {
   });
 }
 
+export async function updateUserById(id: number, data: {
+  name?: string;
+  email?: string;
+  role?: "user" | "admin";
+  reportEmail?: string | null;
+  passwordHash?: string;
+}): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const updateSet: Record<string, unknown> = {};
+  if (data.name !== undefined) updateSet.name = data.name;
+  if (data.email !== undefined) updateSet.email = data.email;
+  if (data.role !== undefined) updateSet.role = data.role;
+  if (data.reportEmail !== undefined) updateSet.reportEmail = data.reportEmail;
+  if (data.passwordHash !== undefined) updateSet.passwordHash = data.passwordHash;
+  if (Object.keys(updateSet).length > 0) {
+    await db.update(users).set(updateSet).where(eq(users.id, id));
+  }
+}
+
 export async function updateUserProfile(id: number, data: {
   name?: string;
   profilePhoto?: string;

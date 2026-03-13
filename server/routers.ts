@@ -9,7 +9,7 @@ import { invokeLLM } from "./_core/llm";
 import { storagePut } from "./storage";
 import {
   createConsultation, updateConsultation, getConsultationById, getConsultationsByUser,
-  getUserByEmail, getUserByOpenId, getAllUsers, createUser, updateUserProfile, deleteUser,
+  getUserByEmail, getUserByOpenId, getAllUsers, createUser, updateUserProfile, updateUserById, deleteUser,
   getSetting, setSetting, getAllSettings,
 } from "./db";
 import { nanoid } from "nanoid";
@@ -128,6 +128,35 @@ export const appRouter = router({
           role: input.role,
           reportEmail: input.reportEmail || undefined,
         });
+        return { success: true };
+      }),
+
+    updateUser: protectedProcedure
+      .input(z.object({
+        userId: z.number(),
+        name: z.string().min(1),
+        email: z.string().email(),
+        role: z.enum(["user", "admin"]),
+        reportEmail: z.string().email().optional().or(z.literal("")),
+        newPassword: z.string().min(6).optional().or(z.literal("")),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+        // Check email uniqueness (ignore current user)
+        const existing = await getUserByEmail(input.email);
+        if (existing && existing.id !== input.userId) {
+          throw new TRPCError({ code: "CONFLICT", message: "E-mail já em uso por outro usuário." });
+        }
+        const data: Parameters<typeof updateUserById>[1] = {
+          name: input.name.trim(),
+          email: input.email.trim(),
+          role: input.role,
+          reportEmail: input.reportEmail?.trim() || null,
+        };
+        if (input.newPassword) {
+          data.passwordHash = await hashPassword(input.newPassword);
+        }
+        await updateUserById(input.userId, data);
         return { success: true };
       }),
 

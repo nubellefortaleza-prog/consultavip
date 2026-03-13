@@ -12,7 +12,7 @@ import {
   Mic, Square, Pause, Play, Loader2, CheckCircle2, RotateCcw, Clock, LogOut,
   History, FileText, CloudUpload, BarChart2, Users, Settings, Shield,
   Bell, Database, X, NotebookPen, ChevronRight, Zap, Eye, EyeOff, Trash2,
-  UserPlus, Camera, Mail,
+  UserPlus, Camera, Mail, Pencil,
 } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
 
@@ -820,6 +820,7 @@ function AdminUsersTab() {
   const usersQuery = trpc.admin.listUsers.useQuery();
   const deleteMutation = trpc.admin.deleteUser.useMutation();
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
 
   const handleDelete = async (userId: number, name: string) => {
     if (!confirm(`Excluir o usuário "${name}"?`)) return;
@@ -839,7 +840,7 @@ function AdminUsersTab() {
           {usersQuery.data?.length ?? 0} usuário(s) cadastrado(s)
         </p>
         <Button
-          onClick={() => setShowCreateForm(v => !v)}
+          onClick={() => { setShowCreateForm(v => !v); setEditingUser(null); }}
           className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans text-sm"
           size="sm"
         >
@@ -848,7 +849,7 @@ function AdminUsersTab() {
         </Button>
       </div>
 
-      {showCreateForm && (
+      {showCreateForm && !editingUser && (
         <CreateUserForm onCreated={() => { setShowCreateForm(false); usersQuery.refetch(); }} />
       )}
 
@@ -857,47 +858,148 @@ function AdminUsersTab() {
       ) : (
         <div className="space-y-2">
           {(usersQuery.data || []).map(u => (
-            <Card key={u.id} className="border-0 shadow-sm bg-white/80">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
-                  {u.profilePhoto ? (
-                    <img src={u.profilePhoto} alt={u.name || "user"} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-sm font-bold text-[var(--color-vip-noir)]">
-                      {(u.name || u.email || "U").charAt(0).toUpperCase()}
+            <Card key={u.id} className={`border-0 shadow-sm bg-white/80 ${editingUser?.id === u.id ? "ring-2 ring-[var(--color-vip-blush)]/40" : ""}`}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
+                    {u.profilePhoto ? (
+                      <img src={u.profilePhoto} alt={u.name || "user"} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-sm font-bold text-[var(--color-vip-noir)]">
+                        {(u.name || u.email || "U").charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{u.name || "Sem nome"}</p>
+                    <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans truncate">{u.email}</p>
+                    {u.reportEmail && (
+                      <p className="text-xs text-[var(--color-vip-blush)]/70 font-sans truncate">📧 {u.reportEmail}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${
+                      u.role === "admin"
+                        ? "bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)]"
+                        : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/50"
+                    }`}>
+                      {u.role === "admin" ? "Admin" : "Usuário"}
                     </span>
-                  )}
+                    <button
+                      onClick={() => { setEditingUser(editingUser?.id === u.id ? null : u); setShowCreateForm(false); }}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/10 transition-colors"
+                      title="Editar usuário"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(u.id, u.name || u.email || String(u.id))}
+                      disabled={deleteMutation.isPending}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="Excluir usuário"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{u.name || "Sem nome"}</p>
-                  <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans truncate">{u.email}</p>
-                  {u.reportEmail && (
-                    <p className="text-xs text-[var(--color-vip-blush)]/70 font-sans truncate">📧 {u.reportEmail}</p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-xs px-2 py-1 rounded-full font-sans ${
-                    u.role === "admin"
-                      ? "bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)]"
-                      : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/50"
-                  }`}>
-                    {u.role === "admin" ? "Admin" : "Usuário"}
-                  </span>
-                  <button
-                    onClick={() => handleDelete(u.id, u.name || u.email || String(u.id))}
-                    disabled={deleteMutation.isPending}
-                    className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50 transition-colors"
-                    title="Excluir usuário"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+
+                {editingUser?.id === u.id && (
+                  <div className="mt-4 pt-4 border-t border-[var(--color-vip-silk)]/50">
+                    <EditUserForm
+                      user={u}
+                      onSaved={() => { setEditingUser(null); usersQuery.refetch(); }}
+                      onCancel={() => setEditingUser(null)}
+                    />
+                  </div>
+                )}
               </CardContent>
             </Card>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(user.name || "");
+  const [email, setEmail] = useState(user.email || "");
+  const [role, setRole] = useState<"user" | "admin">(user.role || "user");
+  const [reportEmail, setReportEmail] = useState(user.reportEmail || "");
+  const [newPassword, setNewPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const updateMutation = trpc.admin.updateUser.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateMutation.mutateAsync({
+        userId: user.id,
+        name: name.trim(),
+        email: email.trim(),
+        role,
+        reportEmail: reportEmail.trim() || "",
+        newPassword: newPassword || "",
+      });
+      toast.success("Usuário atualizado!");
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao atualizar usuário");
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+        </div>
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Perfil</Label>
+          <select
+            value={role}
+            onChange={e => setRole(e.target.value as "user" | "admin")}
+            className="w-full h-10 px-3 rounded-md border border-[var(--color-vip-silk)] bg-white font-sans text-sm text-[var(--color-vip-noir)] focus:outline-none focus:ring-2 focus:ring-[var(--color-vip-blush)]/50"
+          >
+            <option value="user">Usuário</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail de login</Label>
+        <Input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail para relatórios (opcional)</Label>
+        <Input type="email" value={reportEmail} onChange={e => setReportEmail(e.target.value)} placeholder="Deixe vazio para usar o padrão" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nova Senha (opcional)</Label>
+        <div className="relative">
+          <Input
+            type={showPass ? "text" : "password"}
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            placeholder="Deixe vazio para não alterar"
+            className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10"
+          />
+          <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+            {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button type="submit" disabled={updateMutation.isPending} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+          {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Pencil className="w-4 h-4 mr-1.5" />}
+          Salvar Alterações
+        </Button>
+        <Button type="button" onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] font-sans" size="sm">
+          Cancelar
+        </Button>
+      </div>
+    </form>
   );
 }
 
