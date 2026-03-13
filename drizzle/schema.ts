@@ -1,17 +1,25 @@
 import { int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { primaryKey } from "drizzle-orm/mysql-core";
 
-/**
- * Core user table backing auth flow.
- * Extend this file with additional tables as your product grows.
- * Columns use camelCase to match both database fields and generated types.
- */
-export const users = mysqlTable("users", {
-  /**
-   * Surrogate primary key. Auto-incremented numeric value managed by the database.
-   * Use this for relations between tables.
-   */
+// ─── Establishments ───────────────────────────────────────────────────────────
+
+export const establishments = mysqlTable("establishments", {
   id: int("id").autoincrement().primaryKey(),
-  /** Manus OAuth identifier (openId) returned from the OAuth callback. Unique per user. */
+  name: varchar("name", { length: 255 }).notNull(),
+  slug: varchar("slug", { length: 100 }).unique(),
+  logoUrl: text("logoUrl"),
+  active: mysqlEnum("active", ["yes", "no"]).default("yes").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type Establishment = typeof establishments.$inferSelect;
+export type InsertEstablishment = typeof establishments.$inferInsert;
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+export const users = mysqlTable("users", {
+  id: int("id").autoincrement().primaryKey(),
   openId: varchar("openId", { length: 64 }).notNull().unique(),
   name: text("name"),
   email: varchar("email", { length: 320 }),
@@ -20,18 +28,40 @@ export const users = mysqlTable("users", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+  passwordHash: text("passwordHash"),
+  profilePhoto: text("profilePhoto"),
+  reportEmail: varchar("reportEmail", { length: 320 }),
+  /** Which clinic/establishment this user belongs to. 1 = Vip Estetic (platform default). */
+  establishmentId: int("establishmentId").notNull().default(1),
 });
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
+// ─── Settings (per establishment) ─────────────────────────────────────────────
+
+export const settings = mysqlTable("settings", {
+  establishmentId: int("establishmentId").notNull().default(1),
+  key: varchar("key", { length: 100 }).notNull(),
+  value: text("value"),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.establishmentId, table.key] }),
+}));
+
+export type Setting = typeof settings.$inferSelect;
+
+// ─── Consultations ────────────────────────────────────────────────────────────
+
 export const consultations = mysqlTable("consultations", {
   id: int("id").autoincrement().primaryKey(),
   userId: int("userId").notNull(),
+  establishmentId: int("establishmentId").notNull().default(1),
   audioUrl: text("audioUrl"),
   audioKey: varchar("audioKey", { length: 512 }),
   transcription: text("transcription"),
   patientName: varchar("patientName", { length: 255 }),
+  patientPhone: varchar("patientPhone", { length: 32 }),
   consultationDate: varchar("consultationDate", { length: 64 }),
   patientProfile: text("patientProfile"),
   mainComplaints: text("mainComplaints"),

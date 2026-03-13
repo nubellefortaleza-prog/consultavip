@@ -4,20 +4,21 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { trpc } from "@/lib/trpc";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { getLoginUrl } from "@/const";
 import { toast } from "sonner";
 import {
-  Mic, Square, Pause, Play, Upload, FileText, Send,
-  Loader2, CheckCircle2, RotateCcw, Clock, LogOut, History,
+  Mic, Square, Pause, Play, Loader2, CheckCircle2, RotateCcw, Clock, LogOut,
+  History, FileText, CloudUpload, BarChart2, Users, Settings, Shield,
+  Bell, Database, X, NotebookPen, ChevronRight, Zap, Eye, EyeOff, Trash2,
+  UserPlus, Camera, Mail, Pencil, Building2,
 } from "lucide-react";
-import { useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
 const LOGO_URL = "https://files.manuscdn.com/user_upload_by_module/session_file/310419663032644247/XjbcOchGTMROPEqF.png";
 
-type AppStep = "record" | "uploading" | "transcribing" | "report" | "sending" | "done";
+type AppStep = "info" | "record" | "notes";
 
 type ReportData = {
   patientName: string;
@@ -30,137 +31,126 @@ type ReportData = {
   additionalNotes: string;
 };
 
-const REPORT_LABELS: Record<keyof ReportData, string> = {
-  patientName: "NOME DO PACIENTE",
-  consultationDate: "DATA E HORÁRIO",
-  patientProfile: "PERFIL DO PACIENTE",
-  mainComplaints: "QUEIXAS PRINCIPAIS",
-  treatmentPlan: "PLANO DE TRATAMENTO INDICADO",
-  budgetPresented: "ORÇAMENTO APRESENTADO",
-  closedDeal: "O QUE FOI FECHADO",
-  additionalNotes: "OBSERVAÇÕES ADICIONAIS",
-};
-
 const FIELD_ORDER: (keyof ReportData)[] = [
   "patientName", "consultationDate", "patientProfile", "mainComplaints",
   "treatmentPlan", "budgetPresented", "closedDeal", "additionalNotes",
 ];
 
-const SINGLE_LINE_FIELDS: (keyof ReportData)[] = ["patientName", "consultationDate"];
-
 export default function Home() {
-  const { user, loading: authLoading, isAuthenticated, logout } = useAuth();
+  const { user, loading: authLoading, isAuthenticated, logout, refresh: refreshAuth } = useAuth();
   const recorder = useAudioRecorder();
-  const [step, setStep] = useState<AppStep>("record");
-  const [consultationId, setConsultationId] = useState<number | null>(null);
-  const [transcription, setTranscription] = useState("");
-  const [report, setReport] = useState<ReportData>({
-    patientName: "", consultationDate: "", patientProfile: "",
-    mainComplaints: "", treatmentPlan: "", budgetPresented: "",
-    closedDeal: "", additionalNotes: "",
-  });
+  const [step, setStep] = useState<AppStep>("info");
+  const [patientName, setPatientName] = useState("");
+  const [patientPhone, setPatientPhone] = useState("");
+  const [notes, setNotes] = useState("");
   const [showHistory, setShowHistory] = useState(false);
-  const processingRef = useRef(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [showProfile, setShowProfile] = useState(false);
+  const bgProcessingRef = useRef(false);
+  const waitingForBlobRef = useRef(false);
 
   const uploadMutation = trpc.consultation.uploadAudio.useMutation();
   const transcribeMutation = trpc.consultation.transcribe.useMutation();
   const generateReportMutation = trpc.consultation.generateReport.useMutation();
   const sendEmailMutation = trpc.consultation.sendEmail.useMutation();
   const historyQuery = trpc.consultation.list.useQuery(undefined, { enabled: isAuthenticated && showHistory });
+  const [showServerInfo, setShowServerInfo] = useState(false);
+  const serverInfoQuery = trpc.consultation.serverInfo.useQuery(undefined, { enabled: showServerInfo });
 
   const handleStartRecording = useCallback(async () => {
     try { await recorder.startRecording(); } catch (err: any) { toast.error(err.message || "Erro ao iniciar gravação"); }
   }, [recorder]);
 
-  const processAudio = useCallback(async (blob: Blob) => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-    try {
-      setStep("uploading");
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => { const r = reader.result as string; resolve(r.split(",")[1] || r); };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-      const uploadResult = await uploadMutation.mutateAsync({ audioBase64: base64, mimeType: blob.type || "audio/webm" });
-      setConsultationId(uploadResult.consultationId);
+  const handleStopRecording = useCallback(() => {
+    waitingForBlobRef.current = true;
+    recorder.stopRecording();
+  }, [recorder]);
 
-      setStep("transcribing");
-      const transcribeResult = await transcribeMutation.mutateAsync({ consultationId: uploadResult.consultationId, audioUrl: uploadResult.audioUrl });
-      setTranscription(transcribeResult.text);
-
-      const reportResult = await generateReportMutation.mutateAsync({ consultationId: uploadResult.consultationId, transcription: transcribeResult.text });
-      setReport(reportResult);
-      setStep("report");
-      toast.success("Relatório gerado com sucesso!");
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao processar áudio");
-      setStep("record");
-    } finally {
-      processingRef.current = false;
-    }
-  }, [uploadMutation, transcribeMutation, generateReportMutation]);
-
-  // Watch for audioBlob changes after stopping
-  const lastBlobRef = useRef<Blob | null>(null);
   useEffect(() => {
-    if (recorder.audioBlob && recorder.audioBlob !== lastBlobRef.current && recorder.state === "stopped" && step === "record") {
-      lastBlobRef.current = recorder.audioBlob;
+    if (waitingForBlobRef.current && recorder.audioBlob && recorder.state === "stopped" && step === "record") {
+      waitingForBlobRef.current = false;
+      setStep("notes");
     }
   }, [recorder.audioBlob, recorder.state, step]);
 
-  const handleStopAndProcess = useCallback(() => {
-    recorder.stopRecording();
-    // Wait for blob to be available
-    const checkBlob = setInterval(() => {
-      if (recorder.audioBlob || lastBlobRef.current) {
-        clearInterval(checkBlob);
-        const blob = recorder.audioBlob || lastBlobRef.current;
-        if (blob) processAudio(blob);
-      }
-    }, 200);
-    setTimeout(() => clearInterval(checkBlob), 10000);
-  }, [recorder, processAudio]);
-
-  const handleProcessStopped = useCallback(() => {
+  const handleFinishAndSend = useCallback(() => {
     const blob = recorder.audioBlob;
-    if (blob) processAudio(blob);
-    else toast.error("Nenhum áudio encontrado.");
-  }, [recorder.audioBlob, processAudio]);
+    if (!blob) { toast.error("Nenhum áudio encontrado."); return; }
 
-  const handleSendEmail = useCallback(async () => {
-    if (!consultationId) return;
-    try {
-      setStep("sending");
-      await sendEmailMutation.mutateAsync({ consultationId, ...report });
-      setStep("done");
-      toast.success("E-mail enviado com sucesso!");
-    } catch (err: any) {
-      toast.error(err.message || "Erro ao enviar e-mail");
-      setStep("report");
-    }
-  }, [consultationId, report, sendEmailMutation]);
+    const capturedNotes = notes;
+    const capturedName = patientName;
+    const capturedPhone = patientPhone;
 
-  const handleNewConsultation = useCallback(() => {
-    setStep("record"); setConsultationId(null); setTranscription("");
-    setReport({ patientName: "", consultationDate: "", patientProfile: "", mainComplaints: "", treatmentPlan: "", budgetPresented: "", closedDeal: "", additionalNotes: "" });
-    recorder.reset(); lastBlobRef.current = null; processingRef.current = false;
+    setStep("info");
+    setPatientName("");
+    setPatientPhone("");
+    setNotes("");
+    recorder.reset();
+
+    if (bgProcessingRef.current) return;
+    bgProcessingRef.current = true;
+
+    (async () => {
+      const toastId = toast.loading("Enviando áudio...");
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => { const r = reader.result as string; resolve(r.split(",")[1] || r); };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+
+        const uploadResult = await uploadMutation.mutateAsync({
+          audioBase64: base64,
+          mimeType: blob.type || "audio/webm",
+          patientName: capturedName,
+          patientPhone: capturedPhone,
+        });
+
+        toast.loading("Transcrevendo consulta com IA...", { id: toastId });
+        const transcribeResult = await transcribeMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          audioUrl: uploadResult.audioUrl,
+        });
+
+        toast.loading("Gerando relatório com IA...", { id: toastId });
+        const reportResult = await generateReportMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          transcription: transcribeResult.text,
+        });
+
+        toast.loading("Enviando por e-mail...", { id: toastId });
+        await sendEmailMutation.mutateAsync({
+          consultationId: uploadResult.consultationId,
+          patientName: reportResult.patientName || capturedName,
+          consultationDate: reportResult.consultationDate || "",
+          patientProfile: reportResult.patientProfile || "",
+          mainComplaints: reportResult.mainComplaints || "",
+          treatmentPlan: reportResult.treatmentPlan || "",
+          budgetPresented: reportResult.budgetPresented || "",
+          closedDeal: reportResult.closedDeal || "",
+          additionalNotes: capturedNotes
+            ? (reportResult.additionalNotes && reportResult.additionalNotes !== "Não mencionado"
+                ? `${reportResult.additionalNotes}\n\nAnotações do Dr.: ${capturedNotes}`
+                : capturedNotes)
+            : (reportResult.additionalNotes || ""),
+        });
+
+        toast.success(`Relatório de ${capturedName} enviado por e-mail!`, { id: toastId });
+      } catch (err: any) {
+        toast.error(err.message || "Erro ao processar consulta", { id: toastId });
+      } finally {
+        bgProcessingRef.current = false;
+      }
+    })();
+  }, [recorder, notes, patientName, patientPhone, uploadMutation, transcribeMutation, generateReportMutation, sendEmailMutation]);
+
+  const handleCancelNotes = useCallback(() => {
+    setNotes("");
+    setStep("record");
+    recorder.reset();
+    setStep("info");
   }, [recorder]);
-
-  const updateReportField = useCallback((field: keyof ReportData, value: string) => {
-    setReport((prev) => ({ ...prev, [field]: value }));
-  }, []);
-
-  const isProcessing = step === "uploading" || step === "transcribing" || step === "sending";
-  const stepMessage = useMemo(() => {
-    switch (step) {
-      case "uploading": return "Enviando áudio...";
-      case "transcribing": return "Transcrevendo consulta com IA...";
-      case "sending": return "Enviando relatório por e-mail...";
-      default: return "";
-    }
-  }, [step]);
 
   if (authLoading) {
     return (
@@ -191,122 +181,111 @@ export default function Home() {
     );
   }
 
+  const isAdmin = user?.role === "admin";
+
   return (
     <div className="min-h-screen flex flex-col bg-[var(--color-vip-pearl)]">
-      <AppHeader user={user} onLogout={logout} onToggleHistory={() => setShowHistory(!showHistory)} showHistory={showHistory} />
+      <AppHeader
+        user={user}
+        onLogout={logout}
+        onToggleHistory={() => { setShowHistory(!showHistory); setShowAdmin(false); }}
+        showHistory={showHistory}
+        isAdmin={isAdmin}
+        onToggleAdmin={() => { setShowAdmin(!showAdmin); setShowHistory(false); }}
+        showAdmin={showAdmin}
+        onOpenProfile={() => setShowProfile(true)}
+      />
       <main className="flex-1 container py-6 md:py-10">
-        {showHistory ? (
-          <HistoryView consultations={historyQuery.data || []} loading={historyQuery.isLoading} onBack={() => setShowHistory(false)} />
+        {showAdmin && isAdmin ? (
+          <AdminView user={user} onBack={() => setShowAdmin(false)} />
+        ) : showHistory ? (
+          <HistoryView
+            consultations={historyQuery.data || []}
+            loading={historyQuery.isLoading}
+            onBack={() => setShowHistory(false)}
+            onRefresh={() => historyQuery.refetch()}
+            showServerInfo={showServerInfo}
+            onToggleServerInfo={() => setShowServerInfo(v => !v)}
+            serverInfo={serverInfoQuery.data}
+            serverInfoLoading={serverInfoQuery.isLoading}
+            doctor={user}
+          />
         ) : (
           <div className="max-w-2xl mx-auto">
             <StepIndicator currentStep={step} />
-
-            {step === "record" && (
-              <RecordingCard
-                recorderState={recorder.state} formattedDuration={recorder.formattedDuration}
-                onStart={handleStartRecording} onStop={handleStopAndProcess}
-                onPause={recorder.pauseRecording} onResume={recorder.resumeRecording}
-                hasBlob={!!recorder.audioBlob} onProcess={handleProcessStopped}
+            {step === "info" && (
+              <PatientInfoCard
+                patientName={patientName}
+                patientPhone={patientPhone}
+                onPatientNameChange={setPatientName}
+                onPatientPhoneChange={setPatientPhone}
+                onConfirm={() => setStep("record")}
               />
             )}
-
-            {isProcessing && (
-              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                <CardContent className="p-8 md:p-12 text-center">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[var(--color-vip-silk)]/50 flex items-center justify-center">
-                    <Loader2 className="w-10 h-10 animate-spin text-[var(--color-vip-blush)]" />
-                  </div>
-                  <h3 className="text-xl font-semibold text-[var(--color-vip-noir)] mb-2">{stepMessage}</h3>
-                  <p className="text-sm text-[var(--color-vip-noir)]/50 font-sans">Aguarde enquanto processamos sua consulta</p>
-                  {step === "transcribing" && (
-                    <div className="mt-6 flex justify-center gap-1">
-                      {[0,1,2,3,4].map(i => <div key={i} className="w-1.5 rounded-full bg-[var(--color-vip-blush)] audio-wave-bar" style={{animationDelay:`${i*0.15}s`,height:"8px"}} />)}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+            {step === "record" && (
+              <RecordingCard
+                recorderState={recorder.state}
+                formattedDuration={recorder.formattedDuration}
+                onStart={handleStartRecording}
+                onStop={handleStopRecording}
+                onPause={recorder.pauseRecording}
+                onResume={recorder.resumeRecording}
+              />
             )}
-
-            {step === "report" && (
-              <div className="space-y-6">
-                <Card className="border-0 shadow-md bg-white/80 backdrop-blur-sm">
-                  <CardContent className="p-6">
-                    <div className="flex items-center gap-2 mb-3">
-                      <FileText className="w-4 h-4 text-[var(--color-vip-terracotta)]" />
-                      <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Transcrição</h3>
-                    </div>
-                    <div className="bg-[var(--color-vip-pearl)] rounded-lg p-4 max-h-40 overflow-y-auto">
-                      <p className="text-sm text-[var(--color-vip-noir)]/70 font-sans leading-relaxed whitespace-pre-wrap">{transcription || "Nenhuma transcrição disponível"}</p>
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                  <CardContent className="p-6 md:p-8">
-                    <div className="flex items-center gap-2 mb-6">
-                      <FileText className="w-5 h-5 text-[var(--color-vip-blush)]" />
-                      <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Relatório da Consulta</h3>
-                    </div>
-                    <p className="text-sm text-[var(--color-vip-noir)]/50 mb-6 font-sans">Revise e edite os campos abaixo antes de enviar por e-mail.</p>
-                    <div className="space-y-5">
-                      {FIELD_ORDER.map(field => (
-                        <div key={field}>
-                          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">{REPORT_LABELS[field]}</Label>
-                          {SINGLE_LINE_FIELDS.includes(field) ? (
-                            <Input value={report[field]} onChange={e => updateReportField(field, e.target.value)} className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
-                          ) : (
-                            <Textarea value={report[field]} onChange={e => updateReportField(field, e.target.value)} rows={3} className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans resize-y" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                    <Separator className="my-6 bg-[var(--color-vip-silk)]" />
-                    <div className="flex flex-col sm:flex-row gap-3">
-                      <Button onClick={handleSendEmail} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
-                        <Send className="w-4 h-4 mr-2" />Enviar por E-mail
-                      </Button>
-                      <Button onClick={handleNewConsultation} variant="outline" className="border-[var(--color-vip-sage)] text-[var(--color-vip-noir)] hover:bg-[var(--color-vip-sage)]/10 font-sans" size="lg">
-                        <RotateCcw className="w-4 h-4 mr-2" />Nova Consulta
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-            )}
-
-            {step === "done" && (
-              <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
-                <CardContent className="p-8 md:p-12 text-center">
-                  <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-[var(--color-vip-sage)]/20 flex items-center justify-center">
-                    <CheckCircle2 className="w-10 h-10 text-[var(--color-vip-sage)]" />
-                  </div>
-                  <h3 className="text-2xl font-semibold text-[var(--color-vip-noir)] mb-2">Relatório Enviado!</h3>
-                  <p className="text-sm text-[var(--color-vip-noir)]/50 mb-2 font-sans">O relatório de <strong>{report.patientName}</strong> foi enviado com sucesso para:</p>
-                  <p className="text-sm font-medium text-[var(--color-vip-blush)] mb-8 font-sans">nubellefortaleza@gmail.com</p>
-                  <div className="text-left bg-[var(--color-vip-pearl)] rounded-lg p-5 mb-8">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-3 font-sans">Resumo do Relatório</h4>
-                    {FIELD_ORDER.map(field => (
-                      <div key={field} className="flex gap-2 py-1.5 border-b border-[var(--color-vip-silk)]/50 last:border-0">
-                        <span className="text-xs font-semibold text-[var(--color-vip-noir)]/60 uppercase min-w-[140px] font-sans">{REPORT_LABELS[field]}:</span>
-                        <span className="text-xs text-[var(--color-vip-noir)] font-sans">{report[field]}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <Button onClick={handleNewConsultation} className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
-                    <RotateCcw className="w-4 h-4 mr-2" />Nova Consulta
-                  </Button>
-                </CardContent>
-              </Card>
+            {step === "notes" && (
+              <NotesCard
+                notes={notes}
+                onNotesChange={setNotes}
+                onFinish={handleFinishAndSend}
+                onCancel={handleCancelNotes}
+              />
             )}
           </div>
         )}
       </main>
       <AppFooter />
+
+      {showProfile && user && (
+        <UserProfileModal
+          user={user}
+          onClose={() => setShowProfile(false)}
+          onSaved={() => { setShowProfile(false); refreshAuth(); }}
+        />
+      )}
     </div>
   );
 }
 
-function AppHeader({ user, onLogout, onToggleHistory, showHistory }: { user?: any; onLogout?: () => void; onToggleHistory?: () => void; showHistory?: boolean }) {
+// ─── Avatar helper ───────────────────────────────────────────────────────────
+
+function UserAvatar({ user, size = "sm", onClick }: { user: any; size?: "sm" | "md"; onClick?: () => void }) {
+  const initials = (user?.name || user?.email || "U").charAt(0).toUpperCase();
+  const cls = size === "sm" ? "w-8 h-8 text-sm" : "w-14 h-14 text-xl";
+  return (
+    <button
+      onClick={onClick}
+      title="Meu perfil"
+      className={`${cls} rounded-full flex items-center justify-center flex-shrink-0 overflow-hidden border-2 border-[var(--color-vip-silk)] hover:border-[var(--color-vip-blush)] transition-colors`}
+    >
+      {user?.profilePhoto ? (
+        <img src={user.profilePhoto} alt={user.name || "avatar"} className="w-full h-full object-cover" />
+      ) : (
+        <span className="bg-[var(--color-vip-silk)] w-full h-full flex items-center justify-center font-semibold text-[var(--color-vip-noir)]">
+          {initials}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ─── App Header ───────────────────────────────────────────────────────────────
+
+function AppHeader({
+  user, onLogout, onToggleHistory, showHistory, isAdmin, onToggleAdmin, showAdmin, onOpenProfile,
+}: {
+  user?: any; onLogout?: () => void; onToggleHistory?: () => void; showHistory?: boolean;
+  isAdmin?: boolean; onToggleAdmin?: () => void; showAdmin?: boolean; onOpenProfile?: () => void;
+}) {
   return (
     <header className="bg-white/70 backdrop-blur-md border-b border-[var(--color-vip-silk)]/50 sticky top-0 z-50">
       <div className="container flex items-center justify-between h-16 md:h-20">
@@ -317,12 +296,17 @@ function AppHeader({ user, onLogout, onToggleHistory, showHistory }: { user?: an
         </div>
         {user && (
           <div className="flex items-center gap-2">
+            {isAdmin && onToggleAdmin && (
+              <Button variant="ghost" size="sm" onClick={onToggleAdmin} className={`text-xs font-sans ${showAdmin ? "text-[var(--color-vip-blush)]" : "text-[var(--color-vip-noir)]/60"}`}>
+                <Shield className="w-4 h-4 mr-1" /><span className="hidden sm:inline">Admin</span>
+              </Button>
+            )}
             {onToggleHistory && (
               <Button variant="ghost" size="sm" onClick={onToggleHistory} className={`text-xs font-sans ${showHistory ? "text-[var(--color-vip-blush)]" : "text-[var(--color-vip-noir)]/60"}`}>
                 <History className="w-4 h-4 mr-1" /><span className="hidden sm:inline">Histórico</span>
               </Button>
             )}
-            <span className="text-xs text-[var(--color-vip-noir)]/50 font-sans hidden md:block">{user.name || user.email}</span>
+            <UserAvatar user={user} size="sm" onClick={onOpenProfile} />
             <Button variant="ghost" size="sm" onClick={onLogout} className="text-xs text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-noir)] font-sans">
               <LogOut className="w-4 h-4" />
             </Button>
@@ -330,6 +314,125 @@ function AppHeader({ user, onLogout, onToggleHistory, showHistory }: { user?: an
         )}
       </div>
     </header>
+  );
+}
+
+// ─── User Profile Modal ───────────────────────────────────────────────────────
+
+function UserProfileModal({ user, onClose, onSaved }: { user: any; onClose: () => void; onSaved: () => void }) {
+  const [name, setName] = useState(user?.name || "");
+  const [reportEmail, setReportEmail] = useState(user?.reportEmail || "");
+  const [photoPreview, setPhotoPreview] = useState<string>(user?.profilePhoto || "");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const updateProfile = trpc.user.updateProfile.useMutation();
+
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 500 * 1024) { toast.error("Foto muito grande. Máximo 500KB."); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => setPhotoPreview(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleSave = async () => {
+    try {
+      await updateProfile.mutateAsync({
+        name: name.trim() || undefined,
+        profilePhoto: photoPreview || undefined,
+        reportEmail: reportEmail.trim(),
+      });
+      toast.success("Perfil atualizado!");
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar perfil");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--color-vip-noir)] px-6 py-5 flex items-center justify-between">
+          <h2 className="text-[var(--color-vip-silk)] font-semibold tracking-wide text-sm uppercase">Meu Perfil</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+
+        <div className="bg-white px-6 py-6 space-y-5">
+          {/* Photo */}
+          <div className="flex flex-col items-center gap-3">
+            <div className="relative">
+              <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-[var(--color-vip-silk)] flex items-center justify-center bg-[var(--color-vip-silk)]">
+                {photoPreview ? (
+                  <img src={photoPreview} alt="Foto" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-2xl font-bold text-[var(--color-vip-noir)]">
+                    {(name || user?.email || "U").charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="absolute -bottom-1 -right-1 w-7 h-7 rounded-full bg-[var(--color-vip-blush)] flex items-center justify-center shadow-md hover:bg-[var(--color-vip-blush)]/90 transition-colors"
+              >
+                <Camera className="w-3.5 h-3.5 text-white" />
+              </button>
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoChange} />
+            {photoPreview && photoPreview !== user?.profilePhoto && (
+              <button onClick={() => setPhotoPreview("")} className="text-xs text-[var(--color-vip-noir)]/40 hover:text-red-500 font-sans">
+                Remover foto
+              </button>
+            )}
+            <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans">Clique no ícone para alterar (máx. 500KB)</p>
+          </div>
+
+          {/* Name */}
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              Nome completo
+            </Label>
+            <Input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="Dr. João Silva"
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+          </div>
+
+          {/* Email */}
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              E-mail para receber relatórios
+            </Label>
+            <Input
+              type="email"
+              value={reportEmail}
+              onChange={e => setReportEmail(e.target.value)}
+              placeholder="meu@email.com (opcional)"
+              className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+            />
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">
+              Se preenchido, os relatórios serão enviados para este e-mail em vez do padrão.
+            </p>
+          </div>
+
+          <div className="pt-2 flex gap-3">
+            <Button
+              onClick={handleSave}
+              disabled={updateProfile.isPending}
+              className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
+            >
+              {updateProfile.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : "Salvar Perfil"}
+            </Button>
+            <Button onClick={onClose} variant="outline" className="border-[var(--color-vip-silk)] font-sans">
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -342,9 +445,12 @@ function AppFooter() {
 }
 
 function StepIndicator({ currentStep }: { currentStep: AppStep }) {
-  const steps = [{ key: "record", label: "Gravar" }, { key: "process", label: "Processar" }, { key: "report", label: "Relatório" }, { key: "done", label: "Enviado" }];
-  const getIdx = () => { if (currentStep === "record") return 0; if (["uploading","transcribing"].includes(currentStep)) return 1; if (currentStep === "report" || currentStep === "sending") return 2; return 3; };
-  const activeIndex = getIdx();
+  const steps = [
+    { key: "info", label: "Paciente" },
+    { key: "record", label: "Gravar" },
+    { key: "notes", label: "Anotações" },
+  ];
+  const activeIndex = steps.findIndex(s => s.key === currentStep);
   return (
     <div className="flex items-center justify-center gap-2 mb-8">
       {steps.map((s, i) => (
@@ -360,9 +466,46 @@ function StepIndicator({ currentStep }: { currentStep: AppStep }) {
   );
 }
 
-function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPause, onResume, hasBlob, onProcess }: {
+function PatientInfoCard({ patientName, patientPhone, onPatientNameChange, onPatientPhoneChange, onConfirm }: {
+  patientName: string; patientPhone: string;
+  onPatientNameChange: (v: string) => void; onPatientPhoneChange: (v: string) => void;
+  onConfirm: () => void;
+}) {
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); if (patientName.trim() && patientPhone.trim()) onConfirm(); };
+  return (
+    <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
+      <CardContent className="p-8 md:p-10">
+        <div className="flex items-center gap-2 mb-6">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-silk)] flex items-center justify-center">
+            <Mic className="w-5 h-5 text-[var(--color-vip-noir)]" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Identificação da Paciente</h3>
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Preencha antes de iniciar a gravação</p>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Nome da Paciente</Label>
+            <Input value={patientName} onChange={e => onPatientNameChange(e.target.value)} placeholder="Ex: Maria Silva" required className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">Telefone / WhatsApp</Label>
+            <Input value={patientPhone} onChange={e => onPatientPhoneChange(e.target.value)} placeholder="Ex: 85999990000" required type="tel" className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans" />
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">O telefone será usado como identificador da paciente</p>
+          </div>
+          <Button type="submit" disabled={!patientName.trim() || !patientPhone.trim()} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
+            <Mic className="w-4 h-4 mr-2" />Iniciar Gravação
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPause, onResume }: {
   recorderState: string; formattedDuration: string; onStart: () => void; onStop: () => void;
-  onPause: () => void; onResume: () => void; hasBlob: boolean; onProcess: () => void;
+  onPause: () => void; onResume: () => void;
 }) {
   const isRecording = recorderState === "recording";
   const isPaused = recorderState === "paused";
@@ -383,7 +526,7 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
               : "bg-[var(--color-vip-noir)] hover:bg-[var(--color-vip-noir)]/90"
             }`}
           >
-            {isRecording ? <Square className="w-8 h-8 md:w-10 md:h-10 text-white" /> : <Mic className="w-8 h-8 md:w-10 md:h-10 text-white" />}
+            {isRecording ? <Square className="w-8 h-8 md:w-10 md:h-10 text-white" /> : isStopped ? <Loader2 className="w-8 h-8 md:w-10 md:h-10 text-white animate-spin" /> : <Mic className="w-8 h-8 md:w-10 md:h-10 text-white" />}
           </button>
         </div>
 
@@ -402,27 +545,33 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
         )}
 
         <h3 className="text-xl md:text-2xl font-semibold text-[var(--color-vip-noir)] mb-2">
-          {isIdle && "Iniciar Gravação"}{isRecording && "Gravando Consulta..."}{isPaused && "Gravação Pausada"}{isStopped && "Gravação Finalizada"}
+          {isIdle && "Iniciar Gravação"}
+          {isRecording && "Gravando Consulta..."}
+          {isPaused && "Gravação Pausada"}
+          {isStopped && "Preparando..."}
         </h3>
         <p className="text-sm text-[var(--color-vip-noir)]/50 mb-6 font-sans">
           {isIdle && "Toque no microfone para começar a gravar a consulta"}
           {isRecording && "Toque no botão para parar a gravação"}
           {isPaused && "Toque para retomar ou finalize a gravação"}
-          {isStopped && "Áudio pronto para processamento"}
+          {isStopped && "Aguarde, finalizando a gravação..."}
         </p>
 
         <div className="flex justify-center gap-3">
           {isRecording && (
-            <Button onClick={onPause} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)] font-sans"><Pause className="w-4 h-4 mr-2" />Pausar</Button>
+            <Button onClick={onPause} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)] font-sans">
+              <Pause className="w-4 h-4 mr-2" />Pausar
+            </Button>
           )}
           {isPaused && (
             <>
-              <Button onClick={onResume} className="bg-[var(--color-vip-terracotta)] hover:bg-[var(--color-vip-terracotta)]/90 text-white font-sans"><Play className="w-4 h-4 mr-2" />Retomar</Button>
-              <Button onClick={onStop} variant="outline" className="border-[var(--color-vip-blush)] text-[var(--color-vip-blush)] font-sans"><Square className="w-4 h-4 mr-2" />Finalizar</Button>
+              <Button onClick={onResume} className="bg-[var(--color-vip-terracotta)] hover:bg-[var(--color-vip-terracotta)]/90 text-white font-sans">
+                <Play className="w-4 h-4 mr-2" />Retomar
+              </Button>
+              <Button onClick={onStop} variant="outline" className="border-[var(--color-vip-blush)] text-[var(--color-vip-blush)] font-sans">
+                <Square className="w-4 h-4 mr-2" />Finalizar
+              </Button>
             </>
-          )}
-          {isStopped && hasBlob && (
-            <Button onClick={onProcess} className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg"><Upload className="w-4 h-4 mr-2" />Processar Consulta</Button>
           )}
         </div>
       </CardContent>
@@ -430,37 +579,988 @@ function RecordingCard({ recorderState, formattedDuration, onStart, onStop, onPa
   );
 }
 
-function HistoryView({ consultations, loading, onBack }: { consultations: any[]; loading: boolean; onBack: () => void }) {
+function NotesCard({ notes, onNotesChange, onFinish, onCancel }: {
+  notes: string; onNotesChange: (v: string) => void; onFinish: () => void; onCancel: () => void;
+}) {
+  return (
+    <Card className="border-0 shadow-lg bg-white/80 backdrop-blur-sm">
+      <CardContent className="p-8 md:p-10">
+        <div className="flex items-center gap-2 mb-2">
+          <div className="w-10 h-10 rounded-full bg-[var(--color-vip-silk)] flex items-center justify-center">
+            <NotebookPen className="w-5 h-5 text-[var(--color-vip-noir)]" />
+          </div>
+          <div>
+            <h3 className="text-lg font-semibold text-[var(--color-vip-noir)]">Anotações do Médico</h3>
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Gravação concluída! Adicione informações extras se desejar.</p>
+          </div>
+        </div>
+
+        <div className="bg-[var(--color-vip-sage)]/10 border border-[var(--color-vip-sage)]/30 rounded-lg px-4 py-3 mb-6 flex items-start gap-2">
+          <CheckCircle2 className="w-4 h-4 text-[var(--color-vip-sage)] mt-0.5 flex-shrink-0" />
+          <p className="text-xs text-[var(--color-vip-noir)]/60 font-sans">
+            Após clicar em <strong>Finalizar e Enviar</strong>, o processamento ocorrerá automaticamente em segundo plano. O relatório será enviado por e-mail quando concluído.
+          </p>
+        </div>
+
+        <div className="mb-6">
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+            Observações Adicionais (opcional)
+          </Label>
+          <Textarea
+            value={notes}
+            onChange={e => onNotesChange(e.target.value)}
+            placeholder="Ex: Paciente apresentou interesse em harmonização facial. Agendado retorno para próxima semana..."
+            rows={6}
+            className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans resize-none"
+          />
+          <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Este campo é opcional. A IA irá gerar automaticamente o relatório completo da consulta.</p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          <Button onClick={onFinish} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="lg">
+            <Zap className="w-4 h-4 mr-2" />Finalizar e Enviar
+          </Button>
+          <Button onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] text-[var(--color-vip-noir)]/60 hover:bg-[var(--color-vip-silk)]/20 font-sans" size="lg">
+            <RotateCcw className="w-4 h-4 mr-2" />Cancelar
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Admin View ────────────────────────────────────────────────────────────────
+
+type AdminTab = "settings" | "users" | "establishments";
+
+function AdminView({ user, onBack }: { user: any; onBack: () => void }) {
+  const [activeTab, setActiveTab] = useState<AdminTab>("settings");
+  // Platform admin = admin of establishment 1
+  const platformAdmin = user?.role === "admin" && (user?.establishmentId ?? 1) === 1;
+
+  const tabs = [
+    { key: "settings" as AdminTab, label: "Configurações", icon: Settings },
+    { key: "users" as AdminTab, label: "Usuários", icon: Users },
+    ...(platformAdmin ? [{ key: "establishments" as AdminTab, label: "Clínicas", icon: Building2 }] : []),
+  ];
+
+  return (
+    <div className="max-w-3xl mx-auto">
+      <div className="flex items-center gap-3 mb-6">
+        <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
+        <div className="flex items-center gap-2">
+          <Shield className="w-5 h-5 text-[var(--color-vip-blush)]" />
+          <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Painel Administrativo</h2>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex gap-1 bg-[var(--color-vip-silk)]/30 p-1 rounded-xl mb-6">
+        {tabs.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-sans font-medium transition-all ${
+              activeTab === key
+                ? "bg-white shadow-sm text-[var(--color-vip-noir)]"
+                : "text-[var(--color-vip-noir)]/50 hover:text-[var(--color-vip-noir)]/80"
+            }`}
+          >
+            <Icon className="w-4 h-4" />{label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === "settings" && <AdminSettingsTab />}
+      {activeTab === "users" && <AdminUsersTab />}
+      {activeTab === "establishments" && platformAdmin && <EstablishmentsTab />}
+    </div>
+  );
+}
+
+// ─── Admin Settings Tab ───────────────────────────────────────────────────────
+
+function AdminSettingsTab() {
+  const settingsQuery = trpc.admin.getSettings.useQuery();
+  const saveMutation = trpc.admin.saveSettings.useMutation();
+
+  const [smtpUser, setSmtpUser] = useState("");
+  const [smtpPass, setSmtpPass] = useState("");
+  const [showSmtpPass, setShowSmtpPass] = useState(false);
+  const [geminiKey, setGeminiKey] = useState("");
+  const [showGemini, setShowGemini] = useState(false);
+  const [destEmail, setDestEmail] = useState("");
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    if (settingsQuery.data && !loaded) {
+      setSmtpUser(settingsQuery.data.smtpUser || "");
+      setDestEmail(settingsQuery.data.destinationEmail || "");
+      setLoaded(true);
+    }
+  }, [settingsQuery.data, loaded]);
+
+  const handleSave = async () => {
+    try {
+      await saveMutation.mutateAsync({
+        smtpUser: smtpUser.trim(),
+        smtpPass: smtpPass || undefined,
+        geminiApiKey: geminiKey || undefined,
+        destinationEmail: destEmail.trim(),
+      });
+      toast.success("Configurações salvas!");
+      setSmtpPass("");
+      setGeminiKey("");
+      settingsQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao salvar");
+    }
+  };
+
+  if (settingsQuery.isLoading) {
+    return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>;
+  }
+
+  const s = settingsQuery.data;
+
+  return (
+    <div className="space-y-4">
+      {/* SMTP */}
+      <Card className="border-0 shadow-md bg-white/80">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Mail className="w-4 h-4 text-[var(--color-vip-blush)]" />
+            <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Configurações de E-mail (SMTP)</h3>
+          </div>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                E-mail Gmail (remetente)
+              </Label>
+              <Input
+                type="email"
+                value={smtpUser}
+                onChange={e => setSmtpUser(e.target.value)}
+                placeholder="seuemail@gmail.com"
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+              />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                Senha de App Gmail {s?.smtpPassSet && <span className="text-[var(--color-vip-sage)] normal-case font-normal">(configurada)</span>}
+              </Label>
+              <div className="relative">
+                <Input
+                  type={showSmtpPass ? "text" : "password"}
+                  value={smtpPass}
+                  onChange={e => setSmtpPass(e.target.value)}
+                  placeholder={s?.smtpPassSet ? "••••••••••••••• (deixe vazio para manter)" : "Senha de App do Gmail"}
+                  className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans pr-10"
+                />
+                <button type="button" onClick={() => setShowSmtpPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                  {showSmtpPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Use uma Senha de App gerada nas configurações de segurança do Google.</p>
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+                E-mail padrão de destino dos relatórios
+              </Label>
+              <Input
+                type="email"
+                value={destEmail}
+                onChange={e => setDestEmail(e.target.value)}
+                placeholder="destinatario@email.com"
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans"
+              />
+              <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Os relatórios serão enviados para este e-mail (pode ser sobrescrito por usuário).</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Gemini */}
+      <Card className="border-0 shadow-md bg-white/80">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-4 h-4 text-[var(--color-vip-blush)]" />
+            <h3 className="text-sm font-semibold text-[var(--color-vip-noir)] uppercase tracking-wider font-sans">Inteligência Artificial (Gemini)</h3>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1.5 block font-sans">
+              Chave API Gemini {s?.geminiKeySet && <span className="text-[var(--color-vip-sage)] normal-case font-normal">(configurada)</span>}
+            </Label>
+            <div className="relative">
+              <Input
+                type={showGemini ? "text" : "password"}
+                value={geminiKey}
+                onChange={e => setGeminiKey(e.target.value)}
+                placeholder={s?.geminiKeySet ? "••••••••••••••• (deixe vazio para manter)" : "AIza..."}
+                className="border-[var(--color-vip-silk)] focus:border-[var(--color-vip-blush)] bg-white font-sans pr-10"
+              />
+              <button type="button" onClick={() => setShowGemini(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                {showGemini ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-[var(--color-vip-noir)]/40 mt-1 font-sans">Obtida em <span className="font-mono">aistudio.google.com</span>. Usada para transcrição e geração de relatórios.</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Button
+        onClick={handleSave}
+        disabled={saveMutation.isPending}
+        className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans"
+        size="lg"
+      >
+        {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+        Salvar Configurações
+      </Button>
+    </div>
+  );
+}
+
+// ─── Admin Users Tab ──────────────────────────────────────────────────────────
+
+function AdminUsersTab() {
+  const usersQuery = trpc.admin.listUsers.useQuery();
+  const deleteMutation = trpc.admin.deleteUser.useMutation();
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingUser, setEditingUser] = useState<any | null>(null);
+
+  const handleDelete = async (userId: number, name: string) => {
+    if (!confirm(`Excluir o usuário "${name}"?`)) return;
+    try {
+      await deleteMutation.mutateAsync({ userId });
+      toast.success("Usuário excluído.");
+      usersQuery.refetch();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao excluir");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--color-vip-noir)]/60 font-sans">
+          {usersQuery.data?.length ?? 0} usuário(s) cadastrado(s)
+        </p>
+        <Button
+          onClick={() => { setShowCreateForm(v => !v); setEditingUser(null); }}
+          className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans text-sm"
+          size="sm"
+        >
+          <UserPlus className="w-4 h-4 mr-1.5" />
+          {showCreateForm ? "Cancelar" : "Novo Usuário"}
+        </Button>
+      </div>
+
+      {showCreateForm && !editingUser && (
+        <CreateUserForm onCreated={() => { setShowCreateForm(false); usersQuery.refetch(); }} />
+      )}
+
+      {usersQuery.isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>
+      ) : (
+        <div className="space-y-2">
+          {(usersQuery.data || []).map(u => (
+            <Card key={u.id} className={`border-0 shadow-sm bg-white/80 ${editingUser?.id === u.id ? "ring-2 ring-[var(--color-vip-blush)]/40" : ""}`}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
+                    {u.profilePhoto ? (
+                      <img src={u.profilePhoto} alt={u.name || "user"} className="w-full h-full object-cover" />
+                    ) : (
+                      <span className="text-sm font-bold text-[var(--color-vip-noir)]">
+                        {(u.name || u.email || "U").charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{u.name || "Sem nome"}</p>
+                    <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans truncate">{u.email}</p>
+                    {u.reportEmail && (
+                      <p className="text-xs text-[var(--color-vip-blush)]/70 font-sans truncate">📧 {u.reportEmail}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${
+                      u.role === "admin"
+                        ? "bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)]"
+                        : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-noir)]/50"
+                    }`}>
+                      {u.role === "admin" ? "Admin" : "Usuário"}
+                    </span>
+                    <button
+                      onClick={() => { setEditingUser(editingUser?.id === u.id ? null : u); setShowCreateForm(false); }}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/10 transition-colors"
+                      title="Editar usuário"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(u.id, u.name || u.email || String(u.id))}
+                      disabled={deleteMutation.isPending}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50 transition-colors"
+                      title="Excluir usuário"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {editingUser?.id === u.id && (
+                  <div className="mt-4 pt-4 border-t border-[var(--color-vip-silk)]/50">
+                    <EditUserForm
+                      user={u}
+                      onSaved={() => { setEditingUser(null); usersQuery.refetch(); }}
+                      onCancel={() => setEditingUser(null)}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(user.name || "");
+  const [email, setEmail] = useState(user.email || "");
+  const [role, setRole] = useState<"user" | "admin">(user.role || "user");
+  const [reportEmail, setReportEmail] = useState(user.reportEmail || "");
+  const [newPassword, setNewPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [profilePhoto, setProfilePhoto] = useState(user.profilePhoto || "");
+  const updateMutation = trpc.admin.updateUser.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateMutation.mutateAsync({
+        userId: user.id,
+        name: name.trim(),
+        email: email.trim(),
+        role,
+        reportEmail: reportEmail.trim() || "",
+        newPassword: newPassword || "",
+        profilePhoto: profilePhoto || "",
+      });
+      toast.success("Usuário atualizado!");
+      onSaved();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao atualizar usuário");
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <ImageUploadField
+        value={profilePhoto}
+        onChange={setProfilePhoto}
+        label="Foto do Usuário (opcional)"
+        shape="circle"
+        placeholder={<span className="text-lg font-bold text-[var(--color-vip-noir)]/30">{name.charAt(0).toUpperCase() || "?"}</span>}
+      />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+        </div>
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Perfil</Label>
+          <select
+            value={role}
+            onChange={e => setRole(e.target.value as "user" | "admin")}
+            className="w-full h-10 px-3 rounded-md border border-[var(--color-vip-silk)] bg-white font-sans text-sm text-[var(--color-vip-noir)] focus:outline-none focus:ring-2 focus:ring-[var(--color-vip-blush)]/50"
+          >
+            <option value="user">Usuário</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail de login</Label>
+        <Input type="email" value={email} onChange={e => setEmail(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail para relatórios (opcional)</Label>
+        <Input type="email" value={reportEmail} onChange={e => setReportEmail(e.target.value)} placeholder="Deixe vazio para usar o padrão" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+      </div>
+      <div>
+        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nova Senha (opcional)</Label>
+        <div className="relative">
+          <Input
+            type={showPass ? "text" : "password"}
+            value={newPassword}
+            onChange={e => setNewPassword(e.target.value)}
+            placeholder="Deixe vazio para não alterar"
+            className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10"
+          />
+          <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+            {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button type="submit" disabled={updateMutation.isPending} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+          {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Pencil className="w-4 h-4 mr-1.5" />}
+          Salvar Alterações
+        </Button>
+        <Button type="button" onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] font-sans" size="sm">
+          Cancelar
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ─── Image Upload Field ───────────────────────────────────────────────────────
+
+function ImageUploadField({
+  value, onChange, label, shape = "circle", maxKB = 500, placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  shape?: "circle" | "square";
+  maxKB?: number;
+  placeholder?: React.ReactNode;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const shapeClass = shape === "circle" ? "rounded-full" : "rounded-lg";
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > maxKB * 1024) {
+      toast.error(`Imagem muito grande. Máximo ${maxKB}KB.`);
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => onChange(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div>
+      <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-2 block font-sans">{label}</Label>
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-14 h-14 ${shapeClass} overflow-hidden border-2 border-[var(--color-vip-silk)] bg-[var(--color-vip-silk)] flex items-center justify-center flex-shrink-0 cursor-pointer hover:border-[var(--color-vip-blush)] transition-colors`}
+          onClick={() => fileRef.current?.click()}
+          title="Clique para selecionar imagem"
+        >
+          {value ? (
+            <img src={value} alt="preview" className="w-full h-full object-cover" />
+          ) : (
+            placeholder ?? <Camera className="w-5 h-5 text-[var(--color-vip-noir)]/30" />
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-vip-silk)] bg-white text-[var(--color-vip-noir)]/70 hover:border-[var(--color-vip-blush)] hover:text-[var(--color-vip-blush)] font-sans transition-colors flex items-center gap-1.5"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            {value ? "Alterar" : "Selecionar"}
+          </button>
+          {value && (
+            <button
+              type="button"
+              onClick={() => { onChange(""); if (fileRef.current) fileRef.current.value = ""; }}
+              className="text-xs text-red-400 hover:text-red-600 font-sans text-left"
+            >
+              Remover imagem
+            </button>
+          )}
+          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans">Máx. {maxKB}KB</p>
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      </div>
+    </div>
+  );
+}
+
+function CreateUserForm({ onCreated }: { onCreated: () => void }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const [role, setRole] = useState<"user" | "admin">("user");
+  const [reportEmail, setReportEmail] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState("");
+  const createMutation = trpc.admin.createUser.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await createMutation.mutateAsync({
+        name: name.trim(),
+        email: email.trim(),
+        password,
+        role,
+        reportEmail: reportEmail.trim() || undefined,
+        profilePhoto: profilePhoto || undefined,
+      });
+      toast.success(`Usuário ${name} criado!`);
+      onCreated();
+    } catch (err: any) {
+      toast.error(err.message || "Erro ao criar usuário");
+    }
+  };
+
+  return (
+    <Card className="border-0 shadow-md bg-[var(--color-vip-pearl)] border border-[var(--color-vip-silk)]">
+      <CardContent className="p-5">
+        <h4 className="text-sm font-semibold text-[var(--color-vip-noir)] mb-4 font-sans uppercase tracking-wider">Novo Usuário</h4>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <ImageUploadField
+            value={profilePhoto}
+            onChange={setProfilePhoto}
+            label="Foto do Usuário (opcional)"
+            shape="circle"
+            placeholder={<span className="text-lg font-bold text-[var(--color-vip-noir)]/30">{name.charAt(0).toUpperCase() || "?"}</span>}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Dr. Nome Completo" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Perfil</Label>
+              <select
+                value={role}
+                onChange={e => setRole(e.target.value as "user" | "admin")}
+                className="w-full h-10 px-3 rounded-md border border-[var(--color-vip-silk)] bg-white font-sans text-sm text-[var(--color-vip-noir)] focus:outline-none focus:ring-2 focus:ring-[var(--color-vip-blush)]/50"
+              >
+                <option value="user">Usuário</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail de login</Label>
+            <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="usuario@email.com" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Senha</Label>
+            <div className="relative">
+              <Input type={showPass ? "text" : "password"} value={password} onChange={e => setPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10" />
+              <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail para relatórios (opcional)</Label>
+            <Input type="email" value={reportEmail} onChange={e => setReportEmail(e.target.value)} placeholder="relatorios@email.com" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+          </div>
+          <Button type="submit" disabled={createMutation.isPending} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <UserPlus className="w-4 h-4 mr-1.5" />}
+            Criar Usuário
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── Establishments Tab ───────────────────────────────────────────────────────
+
+function EstablishmentsTab() {
+  const estQuery = trpc.admin.listEstablishments.useQuery();
+  const updateMutation = trpc.admin.updateEstablishment.useMutation();
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  const handleToggleActive = async (e: any) => {
+    const newActive = e.active === "yes" ? "no" : "yes";
+    if (e.id === 1) return; // cannot deactivate platform
+    try {
+      await updateMutation.mutateAsync({ establishmentId: e.id, active: newActive });
+      estQuery.refetch();
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--color-vip-noir)]/60 font-sans">
+          {estQuery.data?.length ?? 0} clínica(s) cadastrada(s)
+        </p>
+        <Button
+          onClick={() => { setShowCreateForm(v => !v); setEditingId(null); }}
+          className="bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans text-sm"
+          size="sm"
+        >
+          <Building2 className="w-4 h-4 mr-1.5" />
+          {showCreateForm ? "Cancelar" : "Nova Clínica"}
+        </Button>
+      </div>
+
+      {showCreateForm && (
+        <CreateEstablishmentForm onCreated={() => { setShowCreateForm(false); estQuery.refetch(); }} />
+      )}
+
+      {estQuery.isLoading ? (
+        <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)]" /></div>
+      ) : (
+        <div className="space-y-2">
+          {(estQuery.data || []).map(e => (
+            <Card key={e.id} className={`border-0 shadow-sm bg-white/80 ${editingId === e.id ? "ring-2 ring-[var(--color-vip-blush)]/40" : ""}`}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg overflow-hidden border border-[var(--color-vip-silk)] flex-shrink-0 flex items-center justify-center bg-[var(--color-vip-silk)]">
+                    {e.logoUrl ? (
+                      <img src={e.logoUrl} alt={e.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/40" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-[var(--color-vip-noir)] truncate">{e.name}</p>
+                      {e.id === 1 && <span className="text-[10px] bg-[var(--color-vip-blush)]/10 text-[var(--color-vip-blush)] px-2 py-0.5 rounded-full font-sans">Principal</span>}
+                    </div>
+                    {e.slug && <p className="text-xs text-[var(--color-vip-noir)]/40 font-mono">/{e.slug}</p>}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <span className={`text-xs px-2 py-1 rounded-full font-sans ${e.active === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-red-50 text-red-400"}`}>
+                      {e.active === "yes" ? "Ativa" : "Inativa"}
+                    </span>
+                    <button
+                      onClick={() => setEditingId(editingId === e.id ? null : e.id)}
+                      className="p-1.5 rounded-md text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/10 transition-colors"
+                      title="Editar clínica"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    {e.id !== 1 && (
+                      <button
+                        onClick={() => handleToggleActive(e)}
+                        className={`p-1.5 rounded-md transition-colors ${e.active === "yes" ? "text-[var(--color-vip-noir)]/30 hover:text-red-500 hover:bg-red-50" : "text-[var(--color-vip-noir)]/30 hover:text-green-600 hover:bg-green-50"}`}
+                        title={e.active === "yes" ? "Desativar" : "Ativar"}
+                      >
+                        {e.active === "yes" ? <X className="w-3.5 h-3.5" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {editingId === e.id && (
+                  <div className="mt-4 pt-4 border-t border-[var(--color-vip-silk)]/50">
+                    <EditEstablishmentForm
+                      establishment={e}
+                      onSaved={() => { setEditingId(null); estQuery.refetch(); }}
+                      onCancel={() => setEditingId(null)}
+                    />
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EditEstablishmentForm({ establishment, onSaved, onCancel }: { establishment: any; onSaved: () => void; onCancel: () => void }) {
+  const [name, setName] = useState(establishment.name || "");
+  const [slug, setSlug] = useState(establishment.slug || "");
+  const [logoUrl, setLogoUrl] = useState(establishment.logoUrl || "");
+  const updateMutation = trpc.admin.updateEstablishment.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await updateMutation.mutateAsync({
+        establishmentId: establishment.id,
+        name: name.trim(),
+        slug: slug.trim() || "",
+        logoUrl: logoUrl.trim() || "",
+      });
+      toast.success("Clínica atualizada!");
+      onSaved();
+    } catch (err: any) { toast.error(err.message || "Erro ao atualizar"); }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-3">
+      <ImageUploadField
+        value={logoUrl}
+        onChange={setLogoUrl}
+        label="Logo da Clínica (opcional)"
+        shape="square"
+        placeholder={<Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/30" />}
+      />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome da Clínica</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+        </div>
+        <div>
+          <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (URL)</Label>
+          <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-x" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
+        </div>
+      </div>
+      <div className="flex gap-2 pt-1">
+        <Button type="submit" disabled={updateMutation.isPending} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
+          {updateMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Pencil className="w-4 h-4 mr-1.5" />}
+          Salvar
+        </Button>
+        <Button type="button" onClick={onCancel} variant="outline" className="border-[var(--color-vip-silk)] font-sans" size="sm">Cancelar</Button>
+      </div>
+    </form>
+  );
+}
+
+function CreateEstablishmentForm({ onCreated }: { onCreated: () => void }) {
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [logoUrl, setLogoUrl] = useState("");
+  const [adminName, setAdminName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [adminPassword, setAdminPassword] = useState("");
+  const [showPass, setShowPass] = useState(false);
+  const createMutation = trpc.admin.createEstablishment.useMutation();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const result = await createMutation.mutateAsync({
+        name: name.trim(),
+        slug: slug.trim() || undefined,
+        logoUrl: logoUrl.trim() || undefined,
+        adminName: adminName.trim(),
+        adminEmail: adminEmail.trim(),
+        adminPassword,
+      });
+      toast.success(`Clínica "${name}" criada! Admin: ${adminEmail}`);
+      onCreated();
+    } catch (err: any) { toast.error(err.message || "Erro ao criar clínica"); }
+  };
+
+  return (
+    <Card className="border-0 shadow-md bg-[var(--color-vip-pearl)] border border-[var(--color-vip-silk)]">
+      <CardContent className="p-5">
+        <h4 className="text-sm font-semibold text-[var(--color-vip-noir)] mb-4 font-sans uppercase tracking-wider flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-[var(--color-vip-blush)]" />Nova Clínica
+        </h4>
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Dados da Clínica</p>
+          <ImageUploadField
+            value={logoUrl}
+            onChange={setLogoUrl}
+            label="Logo da Clínica (opcional)"
+            shape="square"
+            placeholder={<Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/30" />}
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Clínica Exemplo" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+            </div>
+            <div>
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (opcional)</Label>
+              <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-exemplo" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
+            </div>
+          </div>
+
+          <div className="pt-1 border-t border-[var(--color-vip-silk)]/50">
+            <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mb-2">Admin da Clínica</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
+                <Input value={adminName} onChange={e => setAdminName(e.target.value)} placeholder="Dr. Nome" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+              </div>
+              <div>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">E-mail</Label>
+                <Input type="email" value={adminEmail} onChange={e => setAdminEmail(e.target.value)} placeholder="admin@clinica.com" required className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Senha do Admin</Label>
+              <div className="relative">
+                <Input type={showPass ? "text" : "password"} value={adminPassword} onChange={e => setAdminPassword(e.target.value)} placeholder="Mínimo 6 caracteres" required minLength={6} className="border-[var(--color-vip-silk)] bg-white font-sans text-sm pr-10" />
+                <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-vip-noir)]/40">
+                  {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <Button type="submit" disabled={createMutation.isPending} className="w-full bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans mt-2" size="sm">
+            {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Building2 className="w-4 h-4 mr-1.5" />}
+            Criar Clínica
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
+
+// ─── History View ──────────────────────────────────────────────────────────────
+
+function HistoryView({ consultations, loading, onBack, showServerInfo, onToggleServerInfo, serverInfo, serverInfoLoading, doctor }: {
+  consultations: any[]; loading: boolean; onBack: () => void; onRefresh?: () => void;
+  showServerInfo?: boolean; onToggleServerInfo?: () => void; serverInfo?: any; serverInfoLoading?: boolean;
+  doctor?: any;
+}) {
+  const [reportConsultation, setReportConsultation] = useState<any | null>(null);
+
   return (
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center gap-3 mb-6">
         <Button variant="ghost" size="sm" onClick={onBack} className="text-[var(--color-vip-noir)]/60 font-sans">← Voltar</Button>
         <h2 className="text-xl font-semibold text-[var(--color-vip-noir)]">Histórico de Consultas</h2>
+        <button onClick={onToggleServerInfo} title="Diagnóstico do servidor" className="ml-auto text-xs text-[var(--color-vip-noir)]/30 hover:text-[var(--color-vip-noir)]/60 font-sans px-2 py-1 rounded">⚙</button>
       </div>
+
+      {showServerInfo && (
+        <Card className="border-0 shadow-md bg-white/80 mb-4">
+          <CardContent className="p-4">
+            <p className="text-xs font-semibold text-[var(--color-vip-noir)] mb-2 font-sans">Diagnóstico do Servidor</p>
+            {serverInfoLoading ? (
+              <div className="flex items-center gap-2"><Loader2 className="w-3 h-3 animate-spin" /><span className="text-xs font-sans text-[var(--color-vip-noir)]/50">Carregando...</span></div>
+            ) : serverInfo ? (
+              <div className="space-y-1 text-xs font-mono text-[var(--color-vip-noir)]/70">
+                <p>📁 Pasta uploads: <span className="text-[var(--color-vip-noir)]">{serverInfo.uploadsDir}</span></p>
+                <p>🎵 Arquivos de áudio: <span className="font-bold text-[var(--color-vip-blush)]">{serverInfo.fileCount}</span></p>
+                <p>📋 Consultas no banco: <span className="font-bold text-[var(--color-vip-blush)]">{serverInfo.dbConsultationsForUser}</span></p>
+                <p>🌐 APP_BASE_URL: <span className="text-[var(--color-vip-noir)]">{serverInfo.appBaseUrl}</span></p>
+                <p>🤖 Gemini: <span className={serverInfo.geminiConfigured ? "text-green-600" : "text-red-500"}>{serverInfo.geminiConfigured ? "✓ configurado" : "✗ não configurado"}</span></p>
+                <p>📂 cwd: <span className="text-[var(--color-vip-noir)]/50">{serverInfo.cwd}</span></p>
+                {serverInfo.files.length > 0 && (
+                  <details className="mt-2"><summary className="cursor-pointer text-[var(--color-vip-noir)]/50">Arquivos ({serverInfo.files.length})</summary>
+                    <div className="mt-1 space-y-0.5 pl-2">{serverInfo.files.map((f: string, i: number) => <p key={i} className="text-[var(--color-vip-noir)]/40">{f}</p>)}</div>
+                  </details>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs font-sans text-red-500">Erro ao carregar diagnóstico</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {loading ? (
         <div className="text-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[var(--color-vip-blush)] mx-auto" /></div>
       ) : consultations.length === 0 ? (
         <Card className="border-0 shadow-md bg-white/80"><CardContent className="p-8 text-center"><p className="text-sm text-[var(--color-vip-noir)]/50 font-sans">Nenhuma consulta registrada ainda.</p></CardContent></Card>
       ) : (
         <div className="space-y-3">
-          {consultations.map((c: any) => (
-            <Card key={c.id} className="border-0 shadow-md bg-white/80 hover:shadow-lg transition-shadow">
-              <CardContent className="p-5">
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm">{c.patientName || "Paciente não identificado"}</h4>
-                    <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans mt-1">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
+          {consultations.map((c: any) => {
+            const hasReport = c.patientName || c.mainComplaints;
+            return (
+              <Card key={c.id} className="border-0 shadow-md bg-white/80 hover:shadow-lg transition-shadow">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <h4 className="font-semibold text-[var(--color-vip-noir)] text-sm truncate">{c.patientName || "Paciente não identificado"}</h4>
+                      {c.patientPhone && <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">📞 {c.patientPhone}</p>}
+                      <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-0.5">{c.consultationDate || new Date(c.createdAt).toLocaleDateString("pt-BR")}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {c.audioUrl && (
+                        <a href={c.audioUrl} download title="Baixar gravação" className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors">
+                          <Mic className="w-3.5 h-3.5" />
+                        </a>
+                      )}
+                      {hasReport && (
+                        <button
+                          onClick={() => setReportConsultation(c)}
+                          title="Ver relatório"
+                          className="p-1.5 rounded-md text-[var(--color-vip-noir)]/40 hover:text-[var(--color-vip-blush)] hover:bg-[var(--color-vip-silk)]/30 transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
+                        {c.emailSent === "yes" ? "Enviado" : "Pendente"}
+                      </span>
+                    </div>
                   </div>
-                  <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
-                    {c.emailSent === "yes" ? "Enviado" : "Pendente"}
-                  </span>
-                </div>
-                {c.mainComplaints && c.mainComplaints !== "Não mencionado" && <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>}
-              </CardContent>
-            </Card>
-          ))}
+                  {c.mainComplaints && c.mainComplaints !== "Não mencionado" && (
+                    <p className="text-xs text-[var(--color-vip-noir)]/40 font-sans mt-2 line-clamp-2">{c.mainComplaints}</p>
+                  )}
+                  {doctor && (
+                    <div className="flex items-center gap-2 mt-3 pt-3 border-t border-[var(--color-vip-silk)]/40">
+                      <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0 border border-[var(--color-vip-silk)]">
+                        {doctor.profilePhoto ? (
+                          <img src={doctor.profilePhoto} alt={doctor.name || "Dr."} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="w-full h-full flex items-center justify-center bg-[var(--color-vip-silk)] text-[var(--color-vip-noir)] text-[10px] font-semibold">
+                            {(doctor.name || doctor.email || "D").charAt(0).toUpperCase()}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[var(--color-vip-noir)]/50 font-sans">{doctor.name || doctor.email}</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
+
+      {reportConsultation && (
+        <ReportModal consultation={reportConsultation} onClose={() => setReportConsultation(null)} />
+      )}
+    </div>
+  );
+}
+
+// ─── Report Modal ──────────────────────────────────────────────────────────────
+
+function ReportModal({ consultation: c, onClose }: { consultation: any; onClose: () => void }) {
+  const fields: Array<[string, string]> = [
+    ["NOME DO PACIENTE", c.patientName || "Não informado"],
+    ["TELEFONE", c.patientPhone || "Não informado"],
+    ["DATA E HORÁRIO", c.consultationDate || new Date(c.createdAt).toLocaleString("pt-BR")],
+    ["PERFIL DO PACIENTE", c.patientProfile || "Não mencionado"],
+    ["QUEIXAS PRINCIPAIS", c.mainComplaints || "Não mencionado"],
+    ["PLANO DE TRATAMENTO INDICADO", c.treatmentPlan || "Não mencionado"],
+    ["ORÇAMENTO APRESENTADO", c.budgetPresented || "Não mencionado"],
+    ["O QUE FOI FECHADO", c.closedDeal || "Não mencionado"],
+    ["OBSERVAÇÕES ADICIONAIS", c.additionalNotes || "Não mencionado"],
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm" onClick={onClose}>
+      <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="bg-[var(--color-vip-noir)] px-6 py-5 flex items-center justify-between rounded-t-2xl">
+          <div>
+            <h2 className="text-[var(--color-vip-silk)] font-semibold tracking-widest text-sm uppercase">VIP ESTETIC</h2>
+            <p className="text-[var(--color-vip-silk)]/50 text-xs font-sans tracking-wider mt-0.5">Relatório de Consulta</p>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center hover:bg-white/20 transition-colors">
+            <X className="w-4 h-4 text-white" />
+          </button>
+        </div>
+        <div className="bg-white px-6 py-6 space-y-4">
+          {fields.map(([label, value]) => (
+            <div key={label} className="border-b border-[var(--color-vip-silk)]/50 pb-3 last:border-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 font-sans">{label}</p>
+              <p className="text-sm text-[var(--color-vip-noir)] font-sans leading-relaxed whitespace-pre-wrap">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="bg-[var(--color-vip-pearl)] px-6 py-4 rounded-b-2xl flex items-center justify-between">
+          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans uppercase tracking-wider">ConsultaVip • Vip Estetic</p>
+          <span className={`text-xs px-2 py-1 rounded-full font-sans ${c.emailSent === "yes" ? "bg-[var(--color-vip-sage)]/20 text-[var(--color-vip-sage)]" : "bg-[var(--color-vip-silk)]/50 text-[var(--color-vip-terracotta)]"}`}>
+            {c.emailSent === "yes" ? "E-mail Enviado" : "E-mail Pendente"}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }

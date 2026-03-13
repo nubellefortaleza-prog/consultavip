@@ -69,8 +69,25 @@ export function useAudioRecorder() {
       setAudioBlob(null);
       startTimeRef.current = Date.now();
       startTimer();
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to start recording:", err);
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error(
+          "Microfone indisponível: o navegador exige HTTPS para acessar o microfone. " +
+          "Acesse o app via HTTPS ou libere a origem no Chrome em: " +
+          "chrome://flags/#unsafely-treat-insecure-origin-as-secure"
+        );
+      }
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        throw new Error(
+          "Permissão de microfone negada. Clique no ícone de cadeado na barra de endereço e permita o acesso ao microfone."
+        );
+      }
+      if (err?.name === "NotFoundError" || err?.name === "DevicesNotFoundError") {
+        throw new Error(
+          "Nenhum microfone encontrado. Verifique se um microfone está conectado ao dispositivo."
+        );
+      }
       throw new Error(
         "Não foi possível acessar o microfone. Verifique as permissões do navegador."
       );

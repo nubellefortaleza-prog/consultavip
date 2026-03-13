@@ -1,22 +1,37 @@
 import nodemailer from "nodemailer";
 
-const DESTINATION_EMAIL = "nubellefortaleza@gmail.com";
+export interface EmailAttachment {
+  filename: string;
+  content: string | Buffer;
+  contentType?: string;
+}
 
 export interface EmailPayload {
   to?: string;
   subject: string;
   text: string;
   html?: string;
+  attachments?: EmailAttachment[];
+}
+
+export interface SmtpCredentials {
+  smtpUser: string;
+  smtpPass: string;
 }
 
 /**
  * Send email via SMTP using nodemailer.
- * Uses SMTP_USER and SMTP_PASS environment variables for authentication.
+ * Credentials can be passed directly or fall back to environment variables.
  * Supports Gmail SMTP with App Passwords.
  */
-export async function sendEmail(payload: EmailPayload): Promise<{ success: boolean; messageId?: string }> {
-  const smtpUser = process.env.SMTP_USER;
-  const smtpPass = process.env.SMTP_PASS;
+export async function sendEmail(
+  payload: EmailPayload,
+  credentials?: SmtpCredentials,
+  defaultDestination?: string,
+): Promise<{ success: boolean; messageId?: string }> {
+  const smtpUser = credentials?.smtpUser || process.env.SMTP_USER;
+  const smtpPass = credentials?.smtpPass || process.env.SMTP_PASS;
+  const fallbackEmail = defaultDestination || process.env.DESTINATION_EMAIL || "nubellefortaleza@gmail.com";
 
   if (!smtpUser || !smtpPass) {
     throw new Error("Credenciais SMTP não configuradas. Configure SMTP_USER e SMTP_PASS nas configurações do app.");
@@ -32,7 +47,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ success: boole
     },
   });
 
-  const to = payload.to || DESTINATION_EMAIL;
+  const to = payload.to || fallbackEmail;
 
   try {
     const info = await transporter.sendMail({
@@ -41,6 +56,7 @@ export async function sendEmail(payload: EmailPayload): Promise<{ success: boole
       subject: payload.subject,
       text: payload.text,
       html: payload.html,
+      attachments: payload.attachments,
     });
 
     console.log("[Email] Sent successfully:", info.messageId);
