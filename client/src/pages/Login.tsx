@@ -169,7 +169,7 @@ export default function Login() {
               textTransform: "uppercase",
               fontFamily: "Georgia, serif",
             }}>
-              Consulta VIP
+              Vip Estetic
             </p>
           </div>
 

@@ -524,7 +524,7 @@ ${input.transcription}`;
           `OBSERVAÇÕES ADICIONAIS: ${input.additionalNotes}`,
           "",
           "═".repeat(50),
-          `Relatório gerado automaticamente pelo ConsultaVip - ${clinicName}`,
+          `Relatório gerado automaticamente pela ${clinicName}`,
         ].join("\n");
 
         const tableRows = [
@@ -539,7 +539,7 @@ ${input.transcription}`;
           ["Observações Adicionais", input.additionalNotes],
         ];
 
-        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">${clinicName.toUpperCase()}</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${tableRows.map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">CONSULTAVIP • ${clinicName.toUpperCase()} • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
+        const htmlReport = `<!DOCTYPE html><html><head><meta charset="utf-8"></head><body style="font-family:'Georgia',serif;background-color:#F9F7F2;padding:32px;"><div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);"><div style="background-color:#1A1A1B;padding:24px;text-align:center;"><h1 style="color:#F2D9C2;margin:0;font-size:24px;letter-spacing:2px;">${clinicName.toUpperCase()}</h1><p style="color:#AABAA4;margin:8px 0 0;font-size:13px;letter-spacing:1px;">RELATÓRIO DE CONSULTA</p></div><div style="padding:32px;"><table style="width:100%;border-collapse:collapse;">${tableRows.map(([label, value]) => `<tr style="border-bottom:1px solid #F2D9C2;"><td style="padding:12px 8px;font-weight:bold;color:#1A1A1B;width:40%;vertical-align:top;font-size:13px;text-transform:uppercase;letter-spacing:0.5px;">${label}</td><td style="padding:12px 8px;color:#1A1A1B;font-size:14px;">${value}</td></tr>`).join("")}</table></div><div style="background-color:#F2D9C2;padding:16px;text-align:center;"><p style="margin:0;color:#1A1A1B;font-size:11px;letter-spacing:1px;">${clinicName.toUpperCase()} • RELATÓRIO AUTOMÁTICO</p></div></div></body></html>`;
 
         await updateConsultation(input.consultationId, {
           patientName: input.patientName, consultationDate: input.consultationDate,
