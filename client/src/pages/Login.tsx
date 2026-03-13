@@ -150,26 +150,27 @@ export default function Login() {
         >
           {/* Logo */}
           <div style={{ textAlign: "center", marginBottom: "28px" }}>
-            <img
-              src="/logo-vip.png"
-              alt="VIP Estetic"
-              style={{
-                width: "280px",
-                maxWidth: "82vw",
-                display: "block",
-                margin: "0 auto 14px",
-                filter: "drop-shadow(0 2px 16px rgba(255,255,255,0.12)) brightness(1.05)",
-              }}
-            />
             <p style={{
-              color: "rgba(255,255,255,0.55)",
+              color: "rgba(255,255,255,0.92)",
+              margin: "0 0 6px",
+              fontSize: "28px",
+              letterSpacing: "3px",
+              textTransform: "uppercase",
+              fontFamily: "Georgia, serif",
+              fontWeight: "400",
+              filter: "drop-shadow(0 2px 16px rgba(255,255,255,0.15))",
+            }}>
+              Vip Estetic
+            </p>
+            <p style={{
+              color: "rgba(255,255,255,0.35)",
               margin: 0,
-              fontSize: "11px",
+              fontSize: "10px",
               letterSpacing: "4px",
               textTransform: "uppercase",
               fontFamily: "Georgia, serif",
             }}>
-              Vip Estetic
+              Consulta VIP
             </p>
           </div>
 
