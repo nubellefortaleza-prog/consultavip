@@ -934,6 +934,7 @@ function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => v
   const [reportEmail, setReportEmail] = useState(user.reportEmail || "");
   const [newPassword, setNewPassword] = useState("");
   const [showPass, setShowPass] = useState(false);
+  const [profilePhoto, setProfilePhoto] = useState(user.profilePhoto || "");
   const updateMutation = trpc.admin.updateUser.useMutation();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -946,6 +947,7 @@ function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => v
         role,
         reportEmail: reportEmail.trim() || "",
         newPassword: newPassword || "",
+        profilePhoto: profilePhoto || "",
       });
       toast.success("Usuário atualizado!");
       onSaved();
@@ -956,6 +958,13 @@ function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => v
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      <ImageUploadField
+        value={profilePhoto}
+        onChange={setProfilePhoto}
+        label="Foto do Usuário (opcional)"
+        shape="circle"
+        placeholder={<span className="text-lg font-bold text-[var(--color-vip-noir)]/30">{name.charAt(0).toUpperCase() || "?"}</span>}
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
@@ -1009,6 +1018,75 @@ function EditUserForm({ user, onSaved, onCancel }: { user: any; onSaved: () => v
   );
 }
 
+// ─── Image Upload Field ───────────────────────────────────────────────────────
+
+function ImageUploadField({
+  value, onChange, label, shape = "circle", maxKB = 500, placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+  shape?: "circle" | "square";
+  maxKB?: number;
+  placeholder?: React.ReactNode;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const shapeClass = shape === "circle" ? "rounded-full" : "rounded-lg";
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > maxKB * 1024) {
+      toast.error(`Imagem muito grande. Máximo ${maxKB}KB.`);
+      e.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => onChange(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div>
+      <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-2 block font-sans">{label}</Label>
+      <div className="flex items-center gap-3">
+        <div
+          className={`w-14 h-14 ${shapeClass} overflow-hidden border-2 border-[var(--color-vip-silk)] bg-[var(--color-vip-silk)] flex items-center justify-center flex-shrink-0 cursor-pointer hover:border-[var(--color-vip-blush)] transition-colors`}
+          onClick={() => fileRef.current?.click()}
+          title="Clique para selecionar imagem"
+        >
+          {value ? (
+            <img src={value} alt="preview" className="w-full h-full object-cover" />
+          ) : (
+            placeholder ?? <Camera className="w-5 h-5 text-[var(--color-vip-noir)]/30" />
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="text-xs px-3 py-1.5 rounded-md border border-[var(--color-vip-silk)] bg-white text-[var(--color-vip-noir)]/70 hover:border-[var(--color-vip-blush)] hover:text-[var(--color-vip-blush)] font-sans transition-colors flex items-center gap-1.5"
+          >
+            <Camera className="w-3.5 h-3.5" />
+            {value ? "Alterar" : "Selecionar"}
+          </button>
+          {value && (
+            <button
+              type="button"
+              onClick={() => { onChange(""); if (fileRef.current) fileRef.current.value = ""; }}
+              className="text-xs text-red-400 hover:text-red-600 font-sans text-left"
+            >
+              Remover imagem
+            </button>
+          )}
+          <p className="text-[10px] text-[var(--color-vip-noir)]/30 font-sans">Máx. {maxKB}KB</p>
+        </div>
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
+      </div>
+    </div>
+  );
+}
+
 function CreateUserForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -1016,6 +1094,7 @@ function CreateUserForm({ onCreated }: { onCreated: () => void }) {
   const [showPass, setShowPass] = useState(false);
   const [role, setRole] = useState<"user" | "admin">("user");
   const [reportEmail, setReportEmail] = useState("");
+  const [profilePhoto, setProfilePhoto] = useState("");
   const createMutation = trpc.admin.createUser.useMutation();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1027,6 +1106,7 @@ function CreateUserForm({ onCreated }: { onCreated: () => void }) {
         password,
         role,
         reportEmail: reportEmail.trim() || undefined,
+        profilePhoto: profilePhoto || undefined,
       });
       toast.success(`Usuário ${name} criado!`);
       onCreated();
@@ -1040,6 +1120,13 @@ function CreateUserForm({ onCreated }: { onCreated: () => void }) {
       <CardContent className="p-5">
         <h4 className="text-sm font-semibold text-[var(--color-vip-noir)] mb-4 font-sans uppercase tracking-wider">Novo Usuário</h4>
         <form onSubmit={handleSubmit} className="space-y-3">
+          <ImageUploadField
+            value={profilePhoto}
+            onChange={setProfilePhoto}
+            label="Foto do Usuário (opcional)"
+            shape="circle"
+            placeholder={<span className="text-lg font-bold text-[var(--color-vip-noir)]/30">{name.charAt(0).toUpperCase() || "?"}</span>}
+          />
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
@@ -1206,6 +1293,13 @@ function EditEstablishmentForm({ establishment, onSaved, onCancel }: { establish
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
+      <ImageUploadField
+        value={logoUrl}
+        onChange={setLogoUrl}
+        label="Logo da Clínica (opcional)"
+        shape="square"
+        placeholder={<Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/30" />}
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome da Clínica</Label>
@@ -1215,10 +1309,6 @@ function EditEstablishmentForm({ establishment, onSaved, onCancel }: { establish
           <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (URL)</Label>
           <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-x" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
         </div>
-      </div>
-      <div>
-        <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">URL do Logo (opcional)</Label>
-        <Input value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://..." className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
       </div>
       <div className="flex gap-2 pt-1">
         <Button type="submit" disabled={updateMutation.isPending} className="flex-1 bg-[var(--color-vip-blush)] hover:bg-[var(--color-vip-blush)]/90 text-white font-sans" size="sm">
@@ -1265,6 +1355,13 @@ function CreateEstablishmentForm({ onCreated }: { onCreated: () => void }) {
         </h4>
         <form onSubmit={handleSubmit} className="space-y-3">
           <p className="text-xs text-[var(--color-vip-noir)]/50 font-sans">Dados da Clínica</p>
+          <ImageUploadField
+            value={logoUrl}
+            onChange={setLogoUrl}
+            label="Logo da Clínica (opcional)"
+            shape="square"
+            placeholder={<Building2 className="w-5 h-5 text-[var(--color-vip-noir)]/30" />}
+          />
           <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Nome</Label>
@@ -1274,10 +1371,6 @@ function CreateEstablishmentForm({ onCreated }: { onCreated: () => void }) {
               <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">Slug (opcional)</Label>
               <Input value={slug} onChange={e => setSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="clinica-exemplo" className="border-[var(--color-vip-silk)] bg-white font-sans text-sm font-mono" />
             </div>
-          </div>
-          <div>
-            <Label className="text-xs font-semibold uppercase tracking-wider text-[var(--color-vip-terracotta)] mb-1 block font-sans">URL do Logo (opcional)</Label>
-            <Input value={logoUrl} onChange={e => setLogoUrl(e.target.value)} placeholder="https://..." className="border-[var(--color-vip-silk)] bg-white font-sans text-sm" />
           </div>
 
           <div className="pt-1 border-t border-[var(--color-vip-silk)]/50">

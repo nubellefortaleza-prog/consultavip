@@ -135,6 +135,7 @@ export const appRouter = router({
         password: z.string().min(6),
         role: z.enum(["user", "admin"]),
         reportEmail: z.string().email().optional().or(z.literal("")),
+        profilePhoto: z.string().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -147,6 +148,7 @@ export const appRouter = router({
           passwordHash,
           role: input.role,
           reportEmail: input.reportEmail || undefined,
+          profilePhoto: input.profilePhoto || undefined,
           establishmentId: eid(ctx),
         });
         return { success: true };
@@ -160,6 +162,7 @@ export const appRouter = router({
         role: z.enum(["user", "admin"]),
         reportEmail: z.string().email().optional().or(z.literal("")),
         newPassword: z.string().min(6).optional().or(z.literal("")),
+        profilePhoto: z.string().nullable().optional(),
       }))
       .mutation(async ({ input, ctx }) => {
         if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -172,6 +175,7 @@ export const appRouter = router({
           email: input.email.trim(),
           role: input.role,
           reportEmail: input.reportEmail?.trim() || null,
+          profilePhoto: input.profilePhoto !== undefined ? (input.profilePhoto || null) : undefined,
         };
         if (input.newPassword) {
           data.passwordHash = await hashPassword(input.newPassword);

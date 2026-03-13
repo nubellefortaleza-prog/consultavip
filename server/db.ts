@@ -199,6 +199,7 @@ export async function createUser(data: {
   role: "user" | "admin";
   reportEmail?: string;
   establishmentId: number;
+  profilePhoto?: string;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -209,6 +210,7 @@ export async function createUser(data: {
     passwordHash: data.passwordHash,
     role: data.role,
     reportEmail: data.reportEmail ?? null,
+    profilePhoto: data.profilePhoto ?? null,
     loginMethod: "password",
     establishmentId: data.establishmentId,
     lastSignedIn: new Date(),
@@ -221,6 +223,7 @@ export async function updateUserById(id: number, data: {
   role?: "user" | "admin";
   reportEmail?: string | null;
   passwordHash?: string;
+  profilePhoto?: string | null;
 }): Promise<void> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -230,6 +233,7 @@ export async function updateUserById(id: number, data: {
   if (data.role !== undefined) updateSet.role = data.role;
   if (data.reportEmail !== undefined) updateSet.reportEmail = data.reportEmail;
   if (data.passwordHash !== undefined) updateSet.passwordHash = data.passwordHash;
+  if (data.profilePhoto !== undefined) updateSet.profilePhoto = data.profilePhoto;
   if (Object.keys(updateSet).length > 0) {
     await db.update(users).set(updateSet).where(eq(users.id, id));
   }
